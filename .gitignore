@@ -1,0 +1,23 @@
+# Large model files (can be regenerated)
+*.pt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# System
+.DS_Store
+*.log
+
+# Data files (optional - include in repo if size permits)
+# train.json
+# test.json
