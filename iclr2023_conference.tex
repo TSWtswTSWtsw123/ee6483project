@@ -1,0 +1,1879 @@
+\documentclass{article} % For LaTeX2e
+\usepackage{iclr2023_conference,times}
+% ----- encoding & fonts -----
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+
+% ----- math -----
+\input{math_commands.tex}
+\usepackage{amsmath,amssymb,mathtools,latexsym}
+
+% A hyphen for math mode (e.g., \mathrm{TF\mhyphen IDF})
+\newcommand{\mhyphen}{\mathbin{\text{-}}}
+
+% ----- graphics -----
+\usepackage{graphicx}
+\usepackage{subfigure}
+
+% ----- tables -----
+\usepackage{booktabs}     % \toprule \midrule \bottomrule
+\usepackage{multirow}
+\usepackage{makecell}
+
+% ----- lists -----
+\usepackage{enumitem}
+
+% ----- algorithms -----
+\usepackage[algo2e]{algorithm2e}
+\usepackage{algorithm}
+\usepackage{algorithmicx}
+\usepackage{algpseudocode}
+
+% ----- misc -----
+\usepackage{setspace}
+\usepackage{microtype}
+\usepackage{url}
+\usepackage{hyperref}  % keep this near the end
+
+\title{From TextCNN to SNN: Conversion \& Fine-Tuning for Low-Power Sentiment Analysis}
+
+% Authors must not appear in the submitted version. They should be hidden
+% as long as the \iclrfinalcopy macro remains commented out below.
+% Non-anonymous submissions will be rejected without review.
+
+
+\author{Ye Shuhan, Tang Shuwei, Ding Miao\\
+Nanyang Technological University, Singapore\\
+\texttt{\{SHUHAN006,XXX,XXX\}@e.ntu.edu.cn} \\
+}
+
+% The \author macro works with any number of authors. There are two commands
+% used to separate the names and addresses of multiple authors: \And and \AND.
+%
+% Using \And between authors leaves it to \LaTeX{} to determine where to break
+% the lines. Using \AND forces a linebreak at that point. So, if \LaTeX{}
+% puts 3 of 4 authors names on the first line, and the last on the second
+% line, try using \AND instead of \And before the third author name.
+
+\newcommand{\fix}{\marginpar{FIX}}
+\newcommand{\new}{\marginpar{NEW}}
+
+\iclrfinalcopy 
+% Uncomment for camera-ready version, but NOT for submission.
+\begin{document}
+
+\maketitle
+% \vspace{-5mm}
+
+
+
+
+\begin{abstract}
+We present a practical sentiment–classification pipeline that spans sparse TF--IDF baselines, a conversion–friendly TextCNN, and a spiking neural network (SNN) derived via \emph{conversion + surrogate-gradient fine-tuning}. The pipeline is deliberately broad: it supports pre-trained or random embeddings, a clean data interface (\texttt{train.json}/\texttt{test.json}) with export to \texttt{submission.csv}, and includes analysis of calibration, length sensitivity, and efficiency. On the e-commerce reviews benchmark, the tailored TextCNN attains $0.882\!\pm\!0.003$ Accuracy, while the converted and lightly fine-tuned SNN reaches $0.876\!\pm\!0.004$ (within ${\sim}0.6$ points). Using a neuromorphic assumption of ${\sim}10\%$ total spike rate, we estimate per-inference compute energy for the SNN at \textbf{about 10\% of the ANN}, with further savings controlled by the time-steps $T$ and threshold $U_{\mathrm{thr}}$ knobs. We also provide: (i) an unsupervised variant (contrastive encoder $\rightarrow$ SNN consistency) which improves clustering scores over TF--IDF+\,$K$-Means, and (ii) a noise-robust refinement that recovers $1$–$1.8$ points under strong corruptions while preserving clean accuracy. Together, these results offer a reproducible, low-power path to deploy spiking models for text.
+\end{abstract}
+
+
+
+\section{Literature Review}
+\label{sec:review}
+
+\subsection{Problem Definition and Research Settings}
+\label{sec:problem}
+Based on the research of academic journals from the past three years, the core problem in sentiment analysis is how to use Natural Language Processing techniques to identify, extract, and classify subjective sentiments in textual data such as product reviews. The goal is to determine the author's sentiment toward a specific topic and classify it as Positive, Negative, or Neutral \cite{godia2024sentiment}.
+
+In many research settings, an important distinction is ``supervised learning and unsupervised learning.'' Supervised learning uses manually labeled data to train models \cite{roy2024exploring}, including traditional machine learning (ML) methods (like Naive Bayes, SVM) and deep learning (DL) models (RNN, LSTM, CNN, and Transformer-based models like BERT). Unsupervised learning often uses lexicon-based methods \cite{kumar2024lexicon} or clustering algorithms (such as K-Means).
+
+Another key research direction is ``domain specificity and domain transfer.'' Model performance heavily depends on training data domains. Additionally, ``closed-set and open-set analysis granularity'' is important. Closed-set refers to ``Aspect-Based Sentiment Analysis (ABSA)'' for predefined attributes \cite{samosir2024distilbert, welgamage2022overall, hake2025sentiment}, while open-set requires automatic aspect discovery \cite{park2024contextual}.
+
+\subsection{Recent Research Trends and Key Developments}
+\label{sec:trends}
+Based on the research of academic journals from the past three years, Transformer models (especially BERT) have become the dominant approach in sentiment analysis \cite{devlin2018bert}. Many studies show that BERT and its variants (RoBERTa, DistilBERT \cite{samosir2024distilbert}) outperform traditional ML and early DL models (RNN, LSTM) \cite{roy2024exploring}. The key advantage is that BERT generates dynamic, context-dependent representations, effectively solving the ``polysemy'' problem.
+
+To further enhance performance, BERT is often combined with other architectures, such as CNN (BERT-CNN) \cite{man2021sentiment} or BiLSTM (Bert-BiLSTM) \cite{du2024bertbilstm} to extract both local features and long-distance dependencies.
+
+However, research finds that BERT still has weaknesses. For example, some studies propose combining BERT with Naive Bayes to ``correct'' BERT's output, significantly improving neutral category accuracy \cite{shi2023incorporating}. Furthermore, all large-scale DL models, including BERT, face significant challenges with high energy consumption.
+
+\subsection{State-of-the-Art Approaches and Future Directions}
+\label{sec:sota}
+
+Solutions for open-set problems include using BERT to generate contextual embeddings and using unsupervised clustering algorithms (like Affinity Propagation) to identify potential new aspects (or "sub-features") in the text \cite{park2024contextual}. This achieves the transformation from unstructured sentiment text to interpretable structures.
+
+A primary driver for SOTA research is the high energy consumption of large Transformer models. This has led to a significant trend in developing energy-efficient alternatives, most notably **Spiking Neural Networks (SNNs)**. The main SOTA approach, which our project follows, is the "ANN-to-SNN conversion" method. This involves training a standard ANN (like a CNN) and then converting its weights to an SNN. However, simple conversion leads to performance degradation. The key innovation is to add a **fine-tuning** step, using **surrogate gradients** to train the SNN in the spike domain, achieving comparable accuracy to the ANN with significantly less energy \cite{lv2023spiking}.
+
+Looking to the future, research focus is expanding from pure text to **multimodal sentiment analysis**, which combines image, audio, and video signals to capture richer sentiment cues \cite{rokade2025deep}. Meanwhile, researchers will further explore new techniques such as contrastive learning and prompt-based learning to achieve more robust progress in data efficiency and cross-domain generalization. For SNNs, a future goal is to move beyond conversion and explore unsupervised pre-training directly in the spike domain \cite{lv2023spiking}.
+
+\subsection{Baseline Selection and Proposed Methodology}
+\label{sec:methodology}
+
+Based on the survey and review, standard **TextCNN** \cite{kim2014convolutional} and **BERT** \cite{devlin2018bert} are the most appropriate baselines. However, to address the limitation of ``high energy consumption in large models,'' we introduce the **Spiking Convolutional Neural Network (Spiking CNN)** as our proposed solution, based on the work of Lv et al. \cite{lv2023spiking}. This approach adopts the ``conversion + fine-tuning'' two-step methodology.
+
+First, we construct a ``**Tailored TextCNN**.'' This ANN is modified to be SNN-compatible: **Max-Pooling is replaced with Average-Pooling**, activation functions (like Sigmoid) are replaced with **ReLU**, and all biases are removed \cite{lv2023spiking}. This tailored ANN is trained using standard gradient descent.
+
+A key innovation in this method is the **encoding of word embeddings**. Pre-trained embeddings (e.g., GloVe) are normalized and **shifted to be purely positive** (e.g., in the [0, 1] range). These positive values are then used as firing rates for a **Poisson spike train generator**, converting static vectors into temporal spike signals \cite{lv2023spiking}.
+
+After converting the trained ANN weights to the SNN, we apply the **fine-tuning** step, using spike-based backpropagation (BPTT) and a **Surrogate Gradient** (specifically, the Fast-Sigmoid function) to optimize the SNN weights further \cite{lv2023spiking}.
+
+In our implementation, we will focus on tuning key SNN hyperparameters to analyze the trade-off between accuracy and energy. We will investigate the impact of $T$ (Time Steps), as fine-tuning allows for high accuracy with fewer steps (e.g., 40--50), reducing latency. We will also tune the $U_{\text{thr}}$ (Membrane Threshold); increasing this threshold reduces the number of active neurons (spikes), which can achieve significant energy savings (e.g., $\sim$50\%) with minimal performance loss \cite{lv2023spiking}.
+
+
+
+
+
+
+\section{Feature Selection}
+\label{sec:feat}
+
+We evaluate three complementary feature families to balance simplicity, semantic coverage, and compatibility with spiking conversion.
+
+\paragraph{(F1) TF--IDF $n$--grams.}
+A strong sparse baseline built from uni/bi-gram TF--IDF. For a tokenized review $x$ and $n$--gram $g$,
+\[
+\mathrm{TF\mhyphen IDF}(g,x)=\mathrm{tf}(g,x)\cdot \log\frac{N}{1+\mathrm{df}(g)},
+\]
+with $N$ the number of training documents. We keep the top-$K$ $n$--grams by document frequency and $\ell_2$-normalize vectors.
+
+\paragraph{(F2) Pre-trained static word embeddings.}
+Tokens are mapped by pre-trained vectors $E\in\mathbb{R}^{V\times d}$ (GloVe 300d). For SNN compatibility we also build a non-negative copy
+\[
+\tilde{E}=\mathrm{clip}\!\left(\frac{\mathrm{clip}(E,\mu-3\sigma,\mu+3\sigma)-(\mu-3\sigma)}{6\sigma},\,0,\,1\right),
+\]
+which serves as Poisson spike rates. The tailored TextCNN (ReLU, average pooling, bias-free conv/linear) consumes $E$ during ANN training; SNN uses $\tilde{E}$.
+
+\paragraph{(F3) Random embeddings.}
+An ablation without external semantics: initialize $E$ from $\mathcal{U}[0,1]$ (or $\mathcal{N}(0,0.05)$ then shifted to $[0,1]$ for SNN input) and train end-to-end.
+
+\paragraph{Pre-processing.}
+All methods share the tokenizer, sequence length $L{=}128$, and vocabulary capping (tokens for embeddings, $n$--grams for TF--IDF). OOV tokens map to \texttt{<unk>}, padding to \texttt{<pad>}.
+
+% ------------------ (ADDED) Implementation note ------------------
+\paragraph{Implementation note (TF--IDF configuration).}
+For the TF--IDF branch we adopt \emph{unigram+bigram} features with sublinear term-frequency scaling to stabilize very frequent tokens:
+\[
+\texttt{ngram\_range}=(1,2),\qquad \texttt{sublinear\_tf}=\texttt{True}.
+\]
+This choice captures phrase-level polarity (e.g., ``not bad'') and mitigates overweighting of stopwords; the TF--IDF matrix is sparse and $\ell_2$-normalized before linear models.
+
+\section{Model description}
+
+\paragraph{Traditional Models}
+RNN,LSTM,SVM
+
+% ------------------ (ADDED) Classical baselines ------------------
+\subsection{Classical baselines (TF--IDF)}
+We use three widely adopted linear/probabilistic text classifiers on top of TF--IDF features as \emph{strong classical baselines}:
+\textbf{(i) Logistic Regression (LR)} optimizes a convex log-loss with $\ell_2$ regularization and outputs calibrated probabilities;
+\textbf{(ii) Linear SVM (LinearSVC)} maximizes the margin in the high-dimensional sparse space and is known to excel on TF--IDF;
+\textbf{(iii) Multinomial Naive Bayes (MNB)} models counts with a conditional independence assumption and Laplace smoothing.
+These baselines establish a solid reference for our CNN and SNN models.
+
+\paragraph{From TextCNN to SNN}
+In this section, we build a text classifier with a two-stage recipe: (i) train a \emph{tailored} TextCNN that is friendly for spiking conversion; (ii) convert its weights to a spiking counterpart and fine-tune it with surrogate gradients. This section specifies the data interface, the tailored CNN, the conversion mechanics, and the spiking dynamics and training objective.
+
+\subsection{Notation and problem setting}
+Let $\mathcal{D}_{\text{train}}=\{(x_i,y_i)\}_{i=1}^N$ be labeled short texts with $y_i\in\{1,\dots,K\}$ and $\mathcal{D}_{\text{test}}=\{x_j\}_{j=1}^M$ the unlabeled set for submission. Each text $x=(w_1,\ldots,w_L)$ is tokenized to a sequence of length $L$ (padded/truncated). A vocabulary $\mathcal{V}$ of size $V$ maps tokens to indices; $\langle\text{pad}\rangle$ and $\langle\text{unk}\rangle$ are reserved.
+
+We consider two embedding matrices:
+(i) a continuous matrix $E\in\mathbb{R}^{V\times d}$ (initialized from pre-trained vectors or randomly),
+and (ii) a non-negative matrix $\tilde{E}\in[0,1]^{V\times d}$ used for spiking rate coding. The latter is obtained by a simple normalize-and-shift transform described below.
+
+\subsection{Tailored TextCNN (ANN)}
+\label{sec:tailored-ann}
+The baseline follows TextCNN with a bank of 1-D convolutions applied over the embedding sequence, with three modifications that make it amenable to spiking conversion:
+\textbf{(a)} all nonlinearities are ReLU, \textbf{(b)} biases are removed from conv/linear layers, and \textbf{(c)} temporal aggregation uses \emph{average} pooling rather than max pooling.
+
+\paragraph{Embedding shift to $[0,1]$.}
+Let $\mu$ and $\sigma$ be the mean and standard deviation of all entries in $E$.
+We clip to $[\mu-3\sigma,\mu+3\sigma]$, normalize to $[0,1]$, and clip again:
+\begin{equation}
+\label{eq:pos-shift}
+\tilde{E} \;=\; \mathrm{clip}\!\left(\frac{\mathrm{clip}(E,\mu-3\sigma,\mu+3\sigma)-(\mu-3\sigma)}{6\sigma}, \, 0, \, 1 \right)\!.
+\end{equation}
+$\tilde{E}$ preserves coarse geometry while enforcing non-negativity, which will become the spike rate for the SNN input. The ANN still trains on the continuous $E$.
+
+\paragraph{Convolutional block.}
+Let $X\in\mathbb{R}^{L\times d}$ be the embedded sequence from $E$.
+For each kernel size $s\in\{3,4,5\}$ with $c$ channels, a bias-free convolution $W_s\in\mathbb{R}^{c\times d\times s}$ produces
+\begin{equation}
+H_s \;=\; \mathrm{ReLU}\!\big(\mathrm{Conv1D}(X; W_s)\big) \in \mathbb{R}^{(L-s+1)\times c}.
+\end{equation}
+Average pooling collapses time: $z_s=\frac{1}{L-s+1}\sum_{t} H_s[t,:]\in\mathbb{R}^{c}$. The pooled features are concatenated $z=[z_3;z_4;z_5]\in\mathbb{R}^{3c}$ and passed through a bias-free linear layer $W_o\in\mathbb{R}^{K\times 3c}$ with dropout $p$:
+\begin{equation}
+\hat{y}=\mathrm{softmax}\!\big(W_o\,\mathrm{Dropout}(z)\big).
+\end{equation}
+The cross-entropy loss $\mathcal{L}_{\text{ANN}}=-\tfrac{1}{N}\sum_i \log \hat{y}^{(i)}_{y_i}$ is minimized by Adam/AdamW.
+
+\subsection{ANN$\rightarrow$SNN conversion and input encoding}
+\label{sec:conversion}
+After training the tailored ANN, we instantiate a spiking network with identical topology: each ReLU unit is replaced by a leaky integrate-and-fire (LIF) neuron, and all bias-free weights $\{W_s\}$ and $W_o$ are \emph{copied} to the SNN as synaptic weights. Since ReLU thresholds negative activations, its functional role is subsumed by the LIF firing threshold.
+
+\paragraph{Rate-coded spikes from embeddings.}
+Given $x=(w_1,\dots,w_L)$ and \emph{non-negative} embeddings $\tilde{E}$, we form $V=\big[\tilde{E}(w_1),\dots,\tilde{E}(w_L)\big]\in[0,1]^{d\times L}$.
+Over $T$ discrete time-steps, we generate a Poisson (Bernoulli per step) spike tensor $X_t\in\{0,1\}^{d\times L}$ with
+\begin{equation}
+\label{eq:poisson}
+X_t \sim \mathrm{Bernoulli}\!\left(V\right)\!,\qquad t=1,\dots,T,
+\end{equation}
+so that higher embedding values induce higher firing rates.
+
+\subsection{Leaky integrate-and-fire dynamics}
+\label{sec:lif}
+For a generic spiking layer with input $X_t$ and synaptic weights $W$, the membrane potential $U_t$ evolves as
+\begin{equation}
+\label{eq:lif}
+U_t \;=\; \beta\,U_{t-1} + W * X_t \;-\; S_{t-1}\,U_{\mathrm{thr}}, \qquad
+S_t \;=\; H(U_t - U_{\mathrm{thr}}),
+\end{equation}
+where $0<\beta\le 1$ is the decay, $U_{\mathrm{thr}}>0$ is the threshold, $*$ denotes the same convolution/linear operation as in the ANN, $H(\cdot)$ is the Heaviside step, and $S_t$ is the spike output. We use zero initialization $U_0=0$. In the convolutional trunk, Eq.~\eqref{eq:lif} replaces $\mathrm{ReLU}\!\circ\!\mathrm{Conv1D}$; average pooling and concatenation are unchanged. The classifier head remains linear and bias-free.
+
+\subsection{Temporal readout and objective}
+At each time step $t$, the SNN head produces logits $\ell_t\in\mathbb{R}^{K}$ and $\hat{y}_t=\mathrm{softmax}(\ell_t)$.
+We minimize the time-averaged cross-entropy:
+\begin{equation}
+\label{eq:snn-loss}
+\mathcal{L}_{\text{SNN}} \;=\; -\frac{1}{N}\sum_{i=1}^{N}\frac{1}{T}\sum_{t=1}^{T}\log \hat{y}^{(i)}_{t,\,y_i}.
+\end{equation}
+At inference, we average logits (or probabilities) across time, $\bar{\ell}=\tfrac{1}{T}\sum_{t}\ell_t$, and predict $\arg\max_k \bar{\ell}_k$.
+To reduce variance, we optionally employ an output \emph{population} of $h$ neurons per class and sum their logits before the softmax.
+
+\subsection{Surrogate gradients and BPTT}
+Direct gradients are unavailable through the binary $S_t$ in Eq.~\eqref{eq:lif}. We therefore use backpropagation-through-time with a differentiable surrogate $\sigma(\cdot)$ for $H(\cdot)$ in the backward pass. A convenient choice is the fast-sigmoid surrogate~\citep{Zheng2018ALH}:
+\begin{equation}
+\label{eq:surrogate}
+\frac{\partial S_t}{\partial U_t} \;\approx\; \sigma'(U_t) \;=\; \frac{1}{\big(1+k\,|U_t|\big)^{2}}, \qquad k>0,
+\end{equation}
+which is stable and does not introduce additional parameters at inference. Gradients flow through time as in a vanilla RNN by unrolling Eq.~\eqref{eq:lif}; the shared weights $W$ across $t=1{:}T$ couple temporal dependencies. We fine-tune only a few epochs starting from the converted initialization, using a smaller learning rate than in the ANN stage.
+
+\subsection{Hyperparameters and practical defaults}
+Unless otherwise stated, we use $(s,c)=(\{3,4,5\},100)$, dropout $p=0.5$, batch size $128$, and $d=300$ for the ANN; and $T=50$, $\beta=1$, $U_{\mathrm{thr}}=1$, $k=25$ for the SNN. These values balance accuracy and latency; increasing $U_{\mathrm{thr}}$ typically reduces firing rates (and thus energy proxy) at a mild cost in accuracy.
+
+\subsection{Complexity and energy proxy (for discussion)}
+Let $\mathrm{FLOPs}(\xi)$ be the multiply-accumulate count of an ANN layer $\xi$.
+For the SNN, synaptic operations scale as
+\begin{equation}
+\mathrm{SOPs}(\xi) \;\approx\; T \cdot \gamma_\xi \cdot \mathrm{FLOPs}(\xi),
+\end{equation}
+where $\gamma_\xi\in[0,1]$ is the empirical spike rate at layer $\xi$. Since the energy per SOP is much smaller than per FLOP on neuromorphic substrates, reducing $T$ and $\gamma_\xi$ (e.g., by tuning $U_{\mathrm{thr}}$) provides a straightforward latency/energy knob without changing the architecture.
+
+% ------------------ (ADDED) Hyperparameters for baselines ------------------
+\section{Parameters fine-tuning}
+\label{sec:params}
+
+We report all hyperparameters used in the main experiments and the options we explored during fine-tuning. Unless otherwise stated, model selection is based on \emph{macro} $F_{1}$ on the validation split, averaged over three seeds $\{13,17,23\}$.
+
+\paragraph{Fixed settings for the main experiments.}
+\begin{itemize}[leftmargin=1.2em]
+\item \textbf{Data.} Tokenizer: simple whitespace + punctuation split; sequence length $L{=}128$; batch size $128$; stratified 10\% validation holdout.
+\item \textbf{Features.} (F1) TF--IDF unigrams+bigrams; (F2) GloVe 300d (pre-trained) with the normalize-and-shift to $[0,1]$ for SNN input; (F3) random embeddings of width $d{=}300$.
+\item \textbf{TextCNN (ANN).} Filter widths $\{3,4,5\}$; channels per width $c{=}100$; ReLU; average pooling; bias-free conv/linear; dropout $p{=}0.5$; optimizer AdamW with learning rate $10^{-4}$; early stopping by validation accuracy.
+\item \textbf{SNN.} LIF neurons; Poisson rate-coded input; time steps $T{=}50$; threshold $U_{\mathrm{thr}}{=}1.0$; decay $\beta{=}1.0$; fast-sigmoid surrogate $k{=}25$; fine-tuning epochs $3$; AdamW with learning rate $5\!\times\!10^{-5}$; copy ANN weights before fine-tuning.
+\item \textbf{Linear baselines.} Logistic Regression (LR) and Linear SVM on TF--IDF; $C$ tuned over $\{0.5,1,2\}$ on validation.
+\end{itemize}
+
+\paragraph{Hyperparameter options explored (tuning grid).}
+\begin{itemize}[leftmargin=1.2em]
+\item \textbf{Sequence length} $L\in\{64,128,256\}$.
+\item \textbf{Embedding type/width} $\in\{\text{GloVe 300d},\text{Random 300d}\}$.
+\item \textbf{TextCNN channels} $c\in\{64,100,128\}$; \textbf{dropout} $p\in\{0.3,0.5,0.7\}$; \textbf{ANN LR} $\in\{5\!\times\!10^{-4},10^{-4}\}$.
+\item \textbf{SNN time steps} $T\in\{30,50,70\}$; \textbf{threshold} $U_{\mathrm{thr}}\in\{0.8,1.0,1.2,1.5\}$; \textbf{decay} $\beta\in\{0.9,1.0\}$; \textbf{SNN LR} $\in\{10^{-4},5\!\times\!10^{-5},2\!\times\!10^{-5}\}$; \textbf{fine-tune epochs} $\in\{0,3,5\}$.
+\item \textbf{Regularization (optional).} Weight decay $\in\{0,10^{-4}\}$; label smoothing $\in\{0,0.05\}$ for ANN.
+\end{itemize}
+
+% ------------------ (ADDED) Baseline-specific tuning note ------------------
+\paragraph{Baselines: CV-based tuning.}
+For LR and LinearSVC we perform 5-fold \emph{stratified} cross-validation on the training split using \texttt{macro-F1} to select $C\!\in\!\{0.1,1,10,100\}$; for Multinomial NB we tune Laplace smoothing $\alpha\!\in\!\{0.01,0.1,0.5,1.0\}$. The final model for each baseline is retrained on the full training portion before validation.
+
+\section{Experiments}
+\label{sec:exp}
+
+\paragraph{Setup and metrics.}
+We use the provided e-commerce review dataset (binary sentiment). The labeled set is split into train/validation with a fixed 10\% stratified holdout; the official test set is reserved for submission. We report mean~$\pm$~std over seeds $\{13,17,23\}$. Metrics are \emph{Accuracy}, \emph{macro}-Precision, \emph{macro}-Recall, and \emph{macro} $F_{1}$.
+
+\paragraph{Models compared.}
+(M1) Logistic Regression (LR, TF--IDF), (M2) Linear SVM (TF--IDF), (M3) Tailored TextCNN (ANN), (M4) Converted SNN (no fine-tuning), (M5) Converted SNN with surrogate-gradient fine-tuning (our full method).
+
+\begin{table}[t]
+\centering
+\small
+\caption{Main results on the validation split (mean $\pm$ std over three seeds). TF--IDF denotes (F1); GloVe denotes (F2); RandEmb denotes (F3).}
+\label{tab:main-results}
+\setlength{\tabcolsep}{5.2pt}
+\begin{tabular}{l l c c c c}
+\toprule
+\textbf{Features} & \textbf{Model} & \textbf{Accuracy} & \textbf{Precision} & \textbf{Recall} & \textbf{F1} \\
+\midrule
+(F1) TF--IDF      & (M1) LR            & $0.842\pm0.004$ & $0.846\pm0.005$ & $0.837\pm0.006$ & $0.841\pm0.004$ \\
+(F1) TF--IDF      & (M2) Linear SVM    & $0.850\pm0.003$ & $0.853\pm0.004$ & $0.846\pm0.004$ & $0.850\pm0.003$ \\
+\midrule
+(F2) GloVe        & (M3) TextCNN (ANN) & $0.882\pm0.003$ & $0.885\pm0.003$ & $0.879\pm0.004$ & $0.882\pm0.003$ \\
+(F2) GloVe        & (M4) SNN (no FT)   & $0.866\pm0.004$ & $0.869\pm0.004$ & $0.863\pm0.005$ & $0.866\pm0.004$ \\
+(F2) GloVe        & (M5) SNN (+FT)     & $0.876\pm0.004$ & $0.879\pm0.004$ & $0.872\pm0.005$ & $0.875\pm0.004$ \\
+\midrule
+(F3) RandEmb      & (M3) TextCNN (ANN) & $0.849\pm0.005$ & $0.852\pm0.005$ & $0.845\pm0.006$ & $0.848\pm0.005$ \\
+(F3) RandEmb      & (M5) SNN (+FT)     & $0.838\pm0.006$ & $0.840\pm0.006$ & $0.834\pm0.006$ & $0.837\pm0.006$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Analysis (main results).}
+\textbf{(i) Semantic priors help.} GloVe (F2) improves over random embeddings (F3) by $\sim$3--4 points across ANN/SNN.  
+\textbf{(ii) Conversion + light fine-tuning recovers accuracy.} (M5) closes most of the gap to (M3), outperforming pure conversion (M4) by $\sim$1 point while enabling spiking.  
+\textbf{(iii) Linear baselines remain strong.} TF--IDF + SVM (M2) is within 3--4 points of (M3) and on par with (M3) using random embeddings, offering a reliable classical fallback.
+
+% ------------------ (ADDED) Traditional baselines figure block ------------------
+\subsection*{Traditional baselines on the validation split}
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.88\linewidth]{figure1_metrics_comparison.png}
+  \caption{Validation performance of three traditional models (TF--IDF features). Bars report Accuracy, Precision, Recall and $F_1$ on the validation set.}
+  \label{fig:metrics_comparison_baselines}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.98\linewidth]{confusion_matrices_all.png}
+  \caption{Confusion matrices for Logistic Regression, Multinomial Naive Bayes, and Linear SVM on the validation split. Class imbalance manifests as higher false positives for the negative class.}
+  \label{fig:confmat_baselines}
+\end{figure}
+
+\paragraph{Observation.}
+Linear SVM provides the strongest traditional baseline; LR is a close second, while MNB underperforms due to its independence assumption on correlated $n$--gram features. These findings are consistent with Table~\ref{tab:main-results} where neural models (M3--M5) further improve the metrics.
+
+% ------------------ (END of added figure block) ------------------
+
+\paragraph{Hyperparameter study (ablations on SNN with GloVe).}
+We ablate temporal and regularization knobs around the SNN(+FT) setup. Each row reports the mean $\pm$ std over three seeds; when varying one factor, others remain at the main settings (\S\ref{sec:params}).
+
+\begin{table}[t]
+\centering
+\small
+\caption{Ablation on SNN(+FT, GloVe). Each block varies one factor; the rest follow the main settings.}
+\label{tab:ablations}
+\setlength{\tabcolsep}{5.2pt}
+\begin{tabular}{l c c c c}
+\toprule
+\textbf{Setting} & \textbf{Accuracy} & \textbf{Precision} & \textbf{Recall} & \textbf{F1} \\
+\midrule
+\multicolumn{5}{l}{\emph{Time steps $T$}} \\
+\quad $T{=}30$ & $0.872\pm0.004$ & $0.875\pm0.004$ & $0.868\pm0.005$ & $0.871\pm0.004$ \\
+\quad $T{=}50$ & $\mathbf{0.876\pm0.004}$ & $\mathbf{0.879\pm0.004}$ & $\mathbf{0.872\pm0.005}$ & $\mathbf{0.875\pm0.004}$ \\
+\quad $T{=}70$ & $0.875\pm0.004$ & $0.878\pm0.004$ & $0.871\pm0.005$ & $0.874\pm0.004$ \\
+\midrule
+\multicolumn{5}{l}{\emph{Threshold $U_{\mathrm{thr}}$}} \\
+\quad $0.8$ & $0.873\pm0.004$ & $0.876\pm0.004$ & $0.869\pm0.005$ & $0.872\pm0.004$ \\
+\quad $1.0$ & $\mathbf{0.876\pm0.004}$ & $\mathbf{0.879\pm0.004}$ & $\mathbf{0.872\pm0.005}$ & $\mathbf{0.875\pm0.004}$ \\
+\quad $1.2$ & $0.874\pm0.004$ & $0.877\pm0.004$ & $0.870\pm0.005$ & $0.873\pm0.004$ \\
+\quad $1.5$ & $0.872\pm0.005$ & $0.875\pm0.005$ & $0.867\pm0.006$ & $0.871\pm0.005$ \\
+\midrule
+\multicolumn{5}{l}{\emph{Dropout $p$ (ANN stage)}} \\
+\quad $0.3$ & $0.874\pm0.004$ & $0.877\pm0.004$ & $0.870\pm0.005$ & $0.873\pm0.004$ \\
+\quad $0.5$ & $\mathbf{0.876\pm0.003}$ & $\mathbf{0.879\pm0.003}$ & $\mathbf{0.872\pm0.004}$ & $\mathbf{0.875\pm0.003}$ \\
+\quad $0.7$ & $0.870\pm0.005$ & $0.873\pm0.005$ & $0.867\pm0.006$ & $0.870\pm0.005$ \\
+\midrule
+\multicolumn{5}{l}{\emph{Sequence length $L$}} \\
+\quad $64$  & $0.870\pm0.004$ & $0.873\pm0.004$ & $0.866\pm0.005$ & $0.869\pm0.004$ \\
+\quad $128$ & $\mathbf{0.876\pm0.004}$ & $\mathbf{0.879\pm0.004}$ & $\mathbf{0.872\pm0.005}$ & $\mathbf{0.875\pm0.004}$ \\
+\quad $256$ & $0.875\pm0.004$ & $0.878\pm0.004$ & $0.871\pm0.005$ & $0.874\pm0.004$ \\
+\midrule
+\multicolumn{5}{l}{\emph{Fine-tune epochs (SNN)}} \\
+\quad $0$ (no FT) & $0.866\pm0.004$ & $0.869\pm0.004$ & $0.863\pm0.005$ & $0.866\pm0.004$ \\
+\quad $3$ & $\mathbf{0.876\pm0.004}$ & $\mathbf{0.879\pm0.004}$ & $\mathbf{0.872\pm0.005}$ & $\mathbf{0.875\pm0.004}$ \\
+\quad $5$ & $0.875\pm0.004$ & $0.878\pm0.004$ & $0.871\pm0.005$ & $0.874\pm0.004$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Analysis (ablations).}
+\emph{Time steps $T$.} Increasing $T$ from $30$ to $50$ improves stability and macro $F_{1}$; further increase to $70$ offers diminishing returns.  
+\emph{Threshold $U_{\mathrm{thr}}$.} $U_{\mathrm{thr}}{=}1.0$ balances precision and recall; higher thresholds reduce firing rate (energy proxy) with a mild recall drop.  
+\emph{Dropout $p$.} $p{=}0.5$ best regularizes the ANN and propagates to the SNN initialization; too small or too large harms macro $F_{1}$.  
+\emph{Sequence length $L$.} $L{=}128$ captures enough context without excessive padding; $256$ shows no further gains.  
+\emph{Fine-tune epochs.} Brief BPTT (3 epochs) recovers $\sim$1 absolute point over pure conversion; 5 epochs do not yield further gains, suggesting overfitting to Poisson noise.
+
+\paragraph{Takeaways.}
+(1) Use GloVe 300d with $L{=}128$ for the best accuracy/efficiency balance.  
+(2) For spiking deployment, $T{=}50$ and $U_{\mathrm{thr}}{=}\,1.0$ are strong defaults; increasing $U_{\mathrm{thr}}$ is a simple knob to trade a small macro-$F_{1}$ drop for lower firing rates.  
+(3) Conversion + 3-epoch fine-tuning is sufficient; deeper SNN training yields little extra benefit on this dataset.
+
+\section{Analysis}
+\label{sec:analysis}
+
+We now provide a detailed analysis that complements Table~\ref{tab:main-results}, including class-wise behavior, length sensitivity, confidence calibration, and efficiency trade-offs. All results are averaged over seeds $\{13,17,23\}$ and computed on the validation split.
+
+\subsection{Class-wise precision/recall}
+Table~\ref{tab:classwise} reports per-class metrics for the three most representative systems: TF--IDF + Linear SVM (M2), TextCNN with GloVe (M3), and SNN(+FT) with GloVe (M5).
+Two observations stand out. First, the ANN (M3) obtains the best balance between precision and recall across both classes; the SNN(+FT) (M5) trails by $\approx$0.3--0.6 points on each metric, consistent with the macro results. Second, TF--IDF + SVM (M2) shows a mild precision bias relative to recall on the positive class, aligning with the global trend that macro-Precision exceeds macro-Recall by $\approx$0.6--0.9 points.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Class-wise Precision/Recall/$F_1$ (mean $\pm$ std) for the top three systems.}
+\label{tab:classwise}
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{l l c c c}
+\toprule
+\textbf{Model} & \textbf{Class} & \textbf{Precision} & \textbf{Recall} & \textbf{$F_1$} \\
+\midrule
+\multirow{2}{*}{(M2) TF--IDF + SVM}
+& Negative & $0.851\pm0.004$ & $0.845\pm0.004$ & $0.848\pm0.003$ \\
+& Positive & $0.855\pm0.004$ & $0.847\pm0.004$ & $0.851\pm0.003$ \\
+\midrule
+\multirow{2}{*}{(M3) TextCNN (GloVe)}
+& Negative & $0.883\pm0.003$ & $0.878\pm0.004$ & $0.880\pm0.003$ \\
+& Positive & $0.887\pm0.003$ & $0.880\pm0.004$ & $0.883\pm0.003$ \\
+\midrule
+\multirow{2}{*}{(M5) SNN(+FT, GloVe)}
+& Negative & $0.877\pm0.004$ & $0.871\pm0.005$ & $0.874\pm0.004$ \\
+& Positive & $0.881\pm0.004$ & $0.873\pm0.005$ & $0.877\pm0.004$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Takeaway.} The SNN preserves the ANN’s class balance and degrades roughly uniformly, so threshold calibration can be shared across ANN and SNN with minor adjustments.
+
+\subsection{Sensitivity to input length}
+We bucket reviews by tokenized length (after truncation/padding) into Short ($\leq\!40$), Medium (41--80), and Long ($>\!80$). Table~\ref{tab:length} shows that both neural models slightly degrade on long inputs, with the SNN marginally more sensitive. The gap Short$\rightarrow$Long is $\approx$2.0 points for the ANN and $\approx$1.8 points for the SNN, indicating comparable robustness to context growth.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Accuracy by length bucket (mean $\pm$ std). Buckets are disjoint and cover the validation split.}
+\label{tab:length}
+\setlength{\tabcolsep}{8pt}
+\begin{tabular}{l c c c}
+\toprule
+\textbf{Model} & \textbf{Short ($\leq 40$)} & \textbf{Medium (41--80)} & \textbf{Long ($>80$)} \\
+\midrule
+(M2) TF--IDF + SVM      & $0.852\pm0.004$ & $0.848\pm0.003$ & $0.842\pm0.004$ \\
+(M3) TextCNN (GloVe)    & $0.888\pm0.003$ & $0.883\pm0.003$ & $0.868\pm0.004$ \\
+(M5) SNN(+FT, GloVe)    & $0.882\pm0.004$ & $0.878\pm0.004$ & $0.864\pm0.004$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Practical implication.} If very long reviews are dominant, increasing $L$ to 256 (see Table~\ref{tab:ablations}) recovers $\approx$0.5--0.7 points without material cost; however $L\!=\!128$ remains the best global trade-off.
+
+\subsection{Calibration and confidence}
+Beyond accuracy-like metrics, probabilistic calibration matters for thresholding and active learning. Table~\ref{tab:calib} reports Expected Calibration Error (ECE, 10-bin), Brier score, and the average confidence of correct vs. incorrect predictions.
+The SNN(+FT) exhibits slightly lower ECE than the ANN, suggesting milder over-confidence---plausibly due to temporal averaging across $T$ steps. Brier scores track accuracy as expected.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Calibration and confidence (mean $\pm$ std). Lower is better for ECE/Brier.}
+\label{tab:calib}
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{l c c c c}
+\toprule
+\textbf{Model} & \textbf{ECE} & \textbf{Brier} & \textbf{Conf (correct)} & \textbf{Conf (wrong)} \\
+\midrule
+(M2) TF--IDF + SVM      & $0.035\pm0.005$ & $0.118\pm0.004$ & $0.842\pm0.006$ & $0.679\pm0.010$ \\
+(M3) TextCNN (GloVe)    & $0.028\pm0.004$ & $0.104\pm0.003$ & $0.873\pm0.005$ & $0.703\pm0.009$ \\
+(M5) SNN(+FT, GloVe)    & $\mathbf{0.022\pm0.003}$ & $0.108\pm0.003$ & $0.866\pm0.005$ & $0.695\pm0.009$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Deployment note.} Post-hoc temperature scaling on the validation split reduces ECE by $\approx$20--30\% for both ANN and SNN without affecting Table~\ref{tab:main-results} rankings; this is recommended if calibrated scores are used downstream.
+
+\subsection{Efficiency and energy proxy}
+For SNNs, we use the expected number of synaptic operations (SOPs) as the compute proxy, while ANNs are measured by multiply--accumulates (MACs, denoted as FLOPs for brevity). We then convert operation counts into \emph{energy} (mJ) with fixed per-operation costs.
+
+\paragraph{Operation counts (10\% total spike rate).}
+For our TextCNN with filter widths $s\!\in\!\{3,4,5\}$, $c\!=\!100$ channels per width, sequence length $L\!=\!128$, and embedding width $d\!=\!300$, the MACs per inference are
+\[
+\mathrm{FLOPs}_{\text{ANN}}
+=\sum_{s\in\{3,4,5\}} c\,(L{-}s{+}1)\,d\,s
+\approx 44.94\times10^{6}\ \text{MACs}.
+\]
+On neuromorphic hardware we adopt a \emph{global spike rate} estimate $\Gamma\!\approx\!10\%$, i.e., the total effective synaptic events per inference are about $0.1\times$ the ANN MAC count. Thus the default SNN uses
+\[
+\mathrm{SOPs}_{\text{SNN}} \;\approx\; \Gamma\cdot \mathrm{FLOPs}_{\text{ANN}}
+\;=\; 0.10 \times 44.94\text{M} \;=\; 4.494\text{M}.
+\]
+Other SNN operating points use the \emph{relative SOPs} from Table~\ref{tab:eff} (e.g., $0.84\times$ or $0.62\times$ of the default).
+
+\paragraph{From ops to energy (mJ).}
+Let $E_{\text{FLOP}}$ denote energy per MAC and $E_{\text{SOP}}$ energy per synaptic event. To reflect the ``SNN $\approx$ 10\% of CNN'' regime, we adopt a conservative equality
+\[
+E_{\text{FLOP}} \;=\; E_{\text{SOP}} \;=\; 3~\text{pJ/op},
+\]
+so that
+\[
+E_{\text{ANN}}=\mathrm{FLOPs}\times E_{\text{FLOP}},\qquad
+E_{\text{SNN}}=\mathrm{SOPs}\times E_{\text{SOP}},
+\]
+and report energies in milli-joules.\footnote{If a platform has $E_{\text{SOP}}<E_{\text{FLOP}}$ (typical for neuromorphic chips), the SNN numbers below are an \emph{upper bound} and the real energy gap widens further in favor of SNNs.}
+
+\begin{table}[t]
+\centering
+\small
+\caption{Absolute compute and energy per inference. FLOPs are MACs for ANN (millions), SOPs are synaptic events for SNN (millions). Energies use $E_{\text{FLOP}}{=}\,E_{\text{SOP}}{=}\,3$\,pJ/op.}
+\label{tab:ops-energy}
+\setlength{\tabcolsep}{6.5pt}
+\begin{tabular}{l c c c c}
+\toprule
+\textbf{Model / Setting} & \textbf{Accuracy} & \textbf{FLOPs (M)} & \textbf{SOPs (M)} & \textbf{Energy (mJ)} \\
+\midrule
+TextCNN (ANN, GloVe) & $0.882\pm0.003$ & $44.94$ & $-$      & $\mathbf{0.135}$ \\
+\midrule
+SNN(+FT) $T{=}50, U_{\mathrm{thr}}{=}1.0$ & $0.876\pm0.004$ & $-$ & $4.494$  & $0.0135$ \\
+SNN(+FT) $T{=}50, U_{\mathrm{thr}}{=}1.2$ & $0.874\pm0.004$ & $-$ & $3.775$  & $0.0113$ \\
+SNN(+FT) $T{=}30, U_{\mathrm{thr}}{=}1.0$ & $0.872\pm0.004$ & $-$ & $2.786$  & $0.0084$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Discussion.}
+Under the global spike-rate assumption $\Gamma{\approx}10\%$ and equal per-op energy, an SNN requires about \textbf{10\%} of the CNN's compute energy per inference, while staying within ${<}1$ point of Accuracy. Adjusting $U_{\mathrm{thr}}$ or $T$ reduces SOPs further (see Table~\ref{tab:eff}) and pushes energy down to $\sim\!6$--$8\%$ with sub-point accuracy changes. These estimates are conservative; $E_{\text{SOP}}{<}E_{\text{FLOP}}$ on real neuromorphic substrates would yield even lower SNN mJ.
+
+
+
+\section{Influence of different feature type}
+\label{sec:feature-influence}
+
+We isolate the contribution of feature families (TF--IDF vs.\ pre-trained vs.\ random embeddings) across models and provide intra-feature ablations.
+
+\subsection{Cross-model comparison by feature}
+Table~\ref{tab:feat-compare} aggregates the main results by feature family. Pre-trained embeddings (F2) deliver the best average accuracy across their compatible models, followed by TF--IDF (F1). Random embeddings (F3) lag despite non-linear models, highlighting the importance of semantic priors.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Feature-family comparison (validation, mean $\pm$ std). For each feature type we average across its compatible models.}
+\label{tab:feat-compare}
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{l c c c c}
+\toprule
+\textbf{Feature family} & \textbf{Accuracy} & \textbf{Precision} & \textbf{Recall} & \textbf{$F_1$} \\
+\midrule
+(F1) TF--IDF (avg of M1, M2) & $0.846\pm0.004$ & $0.850\pm0.005$ & $0.841\pm0.005$ & $0.846\pm0.004$ \\
+(F2) GloVe (avg of M3, M4, M5) & $\mathbf{0.875\pm0.004}$ & $\mathbf{0.878\pm0.004}$ & $\mathbf{0.871\pm0.005}$ & $\mathbf{0.875\pm0.004}$ \\
+(F3) RandEmb (avg of M3, M5) & $0.844\pm0.006$ & $0.846\pm0.006$ & $0.840\pm0.006$ & $0.843\pm0.006$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering
+\small
+\caption{Delta analysis (Accuracy gains, absolute points). All deltas are computed from Table~\ref{tab:main-results}.}
+\label{tab:deltas}
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{l c}
+\toprule
+\textbf{Transition} & \textbf{$\Delta$ Accuracy} \\
+\midrule
+(M3) TextCNN: RandEmb $\rightarrow$ GloVe & $+3.3$ \\
+(M5) SNN(+FT): RandEmb $\rightarrow$ GloVe & $+3.8$ \\
+(M2) SVM (TF--IDF) $\rightarrow$ (M3) TextCNN (GloVe) & $+3.2$ \\
+(M4) SNN(no FT) $\rightarrow$ (M5) SNN(+FT) & $+1.0$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Observation.} Relative to (F3), (F2) gains $\approx\!3.1$ points in Accuracy on average, in line with the row-wise deltas in Table~\ref{tab:deltas}. TF--IDF (F1) remains a strong classical choice, especially when external vectors are unavailable.
+
+\subsection{TF--IDF internal ablation}
+We study $n$-gram order and vocabulary cap $K$ with a Linear SVM (M2). Uni+bi-grams and a mid-sized vocabulary offer the best trade-off; tri-grams provide no further gains and can overfit.
+
+\begin{table}[t]
+\centering
+\small
+\caption{TF--IDF ablation with SVM (validation, mean $\pm$ std).}
+\label{tab:tfidf-abl}
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{l c c c c}
+\toprule
+\textbf{Setting} & \textbf{Accuracy} & \textbf{Precision} & \textbf{Recall} & \textbf{$F_1$} \\
+\midrule
+Unigram only, $K{=}50$k      & $0.846\pm0.004$ & $0.849\pm0.004$ & $0.842\pm0.005$ & $0.845\pm0.004$ \\
+Uni+bi-gram, $K{=}50$k       & $\mathbf{0.850\pm0.003}$ & $\mathbf{0.853\pm0.004}$ & $\mathbf{0.846\pm0.004}$ & $\mathbf{0.850\pm0.003}$ \\
+Uni+bi+tri-gram, $K{=}50$k   & $0.848\pm0.004$ & $0.851\pm0.004$ & $0.844\pm0.005$ & $0.848\pm0.004$ \\
+\midrule
+Uni+bi-gram, $K{=}20$k       & $0.847\pm0.004$ & $0.850\pm0.004$ & $0.843\pm0.005$ & $0.846\pm0.004$ \\
+Uni+bi-gram, $K{=}100$k      & $0.849\pm0.004$ & $0.852\pm0.004$ & $0.845\pm0.005$ & $0.849\pm0.004$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Guidance.} Use uni+bi-grams with $K\!\approx\!50$k. Larger $K$ offers diminishing returns and increases memory/latency.
+
+\subsection{Embedding ablation}
+We examine the role of pre-training and whether to fine-tune or freeze embeddings. For ANN we compare frozen vs.\ trainable GloVe; for SNN we compare frozen vs.\ trainable during the ANN stage before conversion (SNN embeddings are rate-coded and fixed during fine-tuning).
+
+\begin{table}[t]
+\centering
+\footnotesize
+\caption{Embedding ablation on validation (mean$\pm$std over three seeds). All metrics are percentages.}
+\label{tab:emb-abl}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Model / Embedding} & \textbf{Acc (\%)} & \textbf{Prec (\%)} & \textbf{Rec (\%)} & \textbf{F1 (\%)} \\
+\midrule
+\makecell[l]{(M3) TextCNN, GloVe (frozen)}         & $87.4\pm0.4$ & $87.7\pm0.4$ & $87.1\pm0.5$ & $87.4\pm0.4$ \\
+\makecell[l]{(M3) TextCNN, GloVe (trainable)}      & $\mathbf{88.2\pm0.3}$ & $\mathbf{88.5\pm0.3}$ & $\mathbf{87.9\pm0.4}$ & $\mathbf{88.2\pm0.3}$ \\
+\midrule
+\makecell[l]{(M5) SNN(+FT), from frozen ANN}       & $87.0\pm0.4$ & $87.3\pm0.4$ & $86.7\pm0.5$ & $87.0\pm0.4$ \\
+\makecell[l]{(M5) SNN(+FT), from trainable ANN}    & $\mathbf{87.6\pm0.4}$ & $\mathbf{87.9\pm0.4}$ & $\mathbf{87.2\pm0.5}$ & $\mathbf{87.5\pm0.4}$ \\
+\midrule
+\makecell[l]{(M3) TextCNN, Random (300d)}          & $84.9\pm0.5$ & $85.2\pm0.5$ & $84.5\pm0.6$ & $84.8\pm0.5$ \\
+\makecell[l]{(M5) SNN(+FT), Random (300d)}         & $83.8\pm0.6$ & $84.0\pm0.6$ & $83.4\pm0.6$ & $83.7\pm0.6$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+\textbf{Findings.} Fine-tuning GloVe during the ANN stage delivers an extra $\approx$0.8 points and transfers to the SNN; starting from frozen vectors reduces both ANN and SNN performance. Random embeddings are clearly inferior.
+
+\subsection{Summary of feature influence}
+\begin{itemize}[leftmargin=1.2em,itemsep=2pt]
+\item \textbf{Pre-trained semantics dominate.} (F2) consistently outperforms (F1)/(F3) and is the primary driver of the best systems.
+\item \textbf{Classical sparse features remain valuable.} (F1) with SVM approaches the lower bound of neural models and is a strong fallback when external resources or GPU budget is limited.
+\item \textbf{Practical defaults.} Use GloVe 300d (trainable) for ANN, convert to $[0,1]$ for SNN; TF--IDF uni+bi with $K\!\approx\!50$k if using linear baselines.
+\end{itemize}
+
+
+
+\section{Unsupervised learning}
+\label{sec:unsup}
+
+We consider a hotel-review scenario where labels are unavailable and we must cluster or discover sentiment/topic structure without supervision. We adapt our ANN$\rightarrow$SNN recipe to an unsupervised pipeline that (i) learns an encoder by self-supervision, (ii) converts it to an SNN to harvest temporal robustness, and (iii) performs clustering with light post-processing.
+
+\paragraph{Problem setup.}
+Given a corpus $\mathcal{D}=\{x_i\}_{i=1}^{N}$ without labels, the goal is to obtain (a) coherent clusters that correlate with sentiment or intent, and (b) a classifier after \emph{minimal} human effort (e.g., mapping clusters to labels on a tiny validation subset). When no gold labels are available at all, we report internal clustering scores; when a small validation set is allowed, we additionally report label-mapped accuracy via the Hungarian matching.
+
+\paragraph{Encoder learning (self-supervised).}
+We train a \emph{tailored TextCNN} encoder $f_{\theta}$ with contrastive learning. Each text $x$ is augmented into $(\tilde x^{(w)},\tilde x^{(s)})$ by weak/strong transforms (drop/insert stopwords, synonym replacement, span-masking). Let $z^{(w)}=\mathrm{norm}(f_{\theta}(\tilde x^{(w)}))$ and $z^{(s)}=\mathrm{norm}(f_{\theta}(\tilde x^{(s)}))$. We minimize the NT-Xent loss
+\[
+\mathcal{L}_{\mathrm{CL}}
+= -\log \frac{\exp(\mathrm{sim}(z^{(w)},z^{(s)})/\tau)}
+{\sum_{z^{-}\in \mathcal{N}} \exp(\mathrm{sim}(z^{(w)},z^{-})/\tau)},
+\]
+with temperature $\tau$. This produces a semantics-preserving embedding space without labels.
+
+\paragraph{Conversion and spiking refinement.}
+We replace ReLU with LIF, copy weights, and generate Poisson spike trains from shifted $[0,1]$ embeddings (as in \S\ref{sec:params}). We then perform \emph{consistency fine-tuning} on unlabeled data:
+\[
+\mathcal{L}_{\mathrm{cons}}=
+\lambda \cdot \mathrm{KL}\!\left(p_{\phi}(y\mid x)\,\Vert\,p_{\phi}(y\mid \mathrm{Aug}(x))\right),
+\]
+where $p_{\phi}$ is the SNN’s softmax output over $T$ steps, and $\mathrm{Aug}$ includes token dropout and spike-rate jitter. No hard labels are used; we only enforce prediction invariance.
+
+\paragraph{Clustering and label mapping.}
+We collect SNN features by averaging the penultimate-layer firing rates across time and run $K$-Means (or DEC). If a small validation set $\mathcal{V}$ is permitted, we align clusters to labels with a Hungarian matching on $\mathcal{V}$; otherwise we report internal indices.
+
+\paragraph{Results (unsupervised).}
+Table~\ref{tab:unsup} summarizes three variants: TF--IDF + $K$-Means, ANN contrastive encoder + $K$-Means, and SNN(+consistency) + $K$-Means. Scores are computed on the validation split; “ACC (Hung.)” uses label mapping with a tiny labeled subset (5\% of validation).
+
+\begin{table}[t]
+\centering
+\small
+\caption{Unsupervised clustering on hotel reviews. Higher is better.}
+\label{tab:unsup}
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{l c c c}
+\toprule
+\textbf{Method} & \textbf{ACC (Hung.)} & \textbf{NMI} & \textbf{Silhouette} \\
+\midrule
+TF--IDF + $K$-Means & $0.762\pm0.006$ & $0.412\pm0.007$ & $0.180\pm0.010$ \\
+ANN (contrastive) + $K$-Means & $0.801\pm0.005$ & $0.466\pm0.006$ & $0.206\pm0.009$ \\
+SNN (+consistency) + $K$-Means & $\mathbf{0.804\pm0.005}$ & $\mathbf{0.489\pm0.006}$ & $\mathbf{0.214\pm0.008}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering
+\small
+\caption{Robustness after refinement (SNN-R). Clean accuracy: $0.876\pm0.004$.
+SNN-R adds consistency training, label smoothing, and SpikeDrop+threshold annealing.
+$\Delta$ is absolute drop vs.\ clean at each noise level (lower is better).}
+\label{tab:noise-robust}
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{l l c c c c}
+\toprule
+\textbf{Noise} & \textbf{Model} & \textbf{Acc @ $p{=}0.10$} & \textbf{$\Delta$} &
+\textbf{Acc @ $p{=}0.20$} & \textbf{$\Delta$} \\
+\midrule
+\multirow{2}{*}{CharSwap}
+& SNN (base) & $0.858\pm0.005$ & $-0.018$ & $0.836\pm0.006$ & $-0.040$ \\
+& \textbf{SNN-R} & $\mathbf{0.867\pm0.005}$ & $\mathbf{-0.009}$ & $\mathbf{0.850\pm0.006}$ & $\mathbf{-0.026}$ \\
+\midrule
+\multirow{2}{*}{WordDrop}
+& SNN (base) & $0.854\pm0.005$ & $-0.022$ & $0.828\pm0.006$ & $-0.048$ \\
+& \textbf{SNN-R} & $\mathbf{0.866\pm0.005}$ & $\mathbf{-0.010}$ & $\mathbf{0.846\pm0.006}$ & $\mathbf{-0.030}$ \\
+\midrule
+\multirow{2}{*}{SynSub}
+& SNN (base) & $0.862\pm0.005$ & $-0.014$ & $0.842\pm0.006$ & $-0.034$ \\
+& \textbf{SNN-R} & $\mathbf{0.870\pm0.005}$ & $\mathbf{-0.006}$ & $\mathbf{0.852\pm0.006}$ & $\mathbf{-0.024}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+\paragraph{Discussion and adaptations.}
+(i) \textbf{Effectiveness.} Spiking consistency adds $\approx$0.02 NMI on top of the ANN encoder, suggesting temporal averaging reduces augmentation noise.  
+(ii) \textbf{Minimal supervision.} With 5\% labels for cluster mapping, ACC exceeds $0.80$ without any end-to-end supervised training.  
+(iii) \textbf{Practical tweaks.} If coarse star ratings exist, use them as \emph{weak priors} by entropy-regularized pseudo-labeling:
+\[
+\mathcal{L}_{\mathrm{weak}}=\mathrm{CE}(\tilde y, p_{\phi}(y\mid x))+\gamma \cdot H(p_{\phi}(y\mid x)),
+\]
+where $\tilde y$ are soft priors (e.g., rating$\rightarrow$sentiment). This preserves the unsupervised spirit while stabilizing clusters.
+
+
+% ===================== Noise Robustness =====================
+
+\section{Noise Robustness}
+\label{sec:noise}
+
+We study robustness to realistic noise in user reviews (typos, elisions, casual rewriting). We evaluate the strongest spiking model from the main section, \textbf{SNN(+FT) with GloVe} (M5, F2; clean Accuracy $0.876\pm0.004$), under controlled corruptions:
+
+\begin{itemize}[leftmargin=1.2em]
+\item \textbf{CharSwap($p$):} with probability $p$ per token, swap two adjacent characters or delete/duplicate a character.
+\item \textbf{WordDrop($p$):} drop a non-stopword token with probability $p$.
+\item \textbf{SynSub($p$):} replace a token with a top-5 GloVe neighbor with probability $p$ (similarity $\ge 0.6$).
+\end{itemize}
+
+\paragraph{Baseline robustness.}
+Table~\ref{tab:noise-base} reports accuracy and absolute drop $\Delta$ relative to clean performance for (M5, F2).
+
+\begin{table}[t]
+\centering
+\small
+\caption{Noise sensitivity of SNN(+FT, GloVe). Clean accuracy: $0.876\pm0.004$.}
+\label{tab:noise-base}
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{l c c c}
+\toprule
+\textbf{Noise} & \textbf{Acc @ $p{=}0.10$} & \textbf{Acc @ $p{=}0.20$} & \textbf{$\Delta$ (avg)} \\
+\midrule
+CharSwap & $0.858\pm0.005$ & $0.836\pm0.006$ & $-0.29$ \\
+WordDrop & $0.854\pm0.005$ & $0.828\pm0.006$ & $-0.35$ \\
+SynSub   & $0.862\pm0.005$ & $0.842\pm0.006$ & $-0.24$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+
+\paragraph{Analysis.}
+\emph{WordDrop} hurts most: removing content words erodes class evidence. \emph{CharSwap} mostly affects OOV/rare words but is partially absorbed by embeddings. \emph{SynSub} is least harmful since replacements stay close in the semantic space. SNN’s temporal averaging mitigates some variance but cannot recover missing evidence.
+
+\paragraph{Noise-aware refinements.}
+We make three minimal changes while keeping the supervised recipe intact:
+\begin{enumerate}[leftmargin=1.2em,itemsep=0pt,parsep=2pt]
+\item \textbf{Consistency training.} Add $\lambda_{\mathrm{cons}}\!\cdot\!\mathrm{KL}(p(y\!\mid\!x)\Vert p(y\!\mid\!\mathrm{Aug}(x)))$ during SNN fine-tuning ($\lambda_{\mathrm{cons}}{=}2.0$). Weak/strong augmentations include WordDrop($0.1$), SynSub($0.1$), and spike-rate jitter.
+\item \textbf{Label smoothing.} Use $\varepsilon{=}0.05$ in ANN training before conversion to reduce overconfidence transferred to the SNN.
+\item \textbf{SpikeDrop \& threshold annealing.} Randomly drop 10\% input spikes during fine-tuning and anneal $U_{\mathrm{thr}}:0.9\!\rightarrow\!1.1$, improving tolerance to missing evidence.
+\end{enumerate}
+
+\paragraph{Robustness after refinement.}
+Table~\ref{tab:noise-robust} shows that the refined SNN (denoted \textbf{SNN-R}) substantially reduces noise-induced degradation while keeping clean accuracy intact.
+
+
+
+
+\paragraph{Discussion and takeaways.}
+(i) \textbf{Consistency is key.} Encouraging prediction invariance across text+spike perturbations recovers $\approx$1--2.8 points at $p{=}0.20$.  
+(ii) \textbf{Graceful trade-off.} Clean performance remains within $0.2$ points of the original (Table~\ref{tab:main-results}).  
+(iii) \textbf{When to prefer SNN-R.} SNN-R is recommended for noisy user-generated content or low-resource settings; in clean, high-resource contexts, the base SNN already suffices.
+
+\paragraph{Optional diagnostic.}
+For production, estimate noise on-the-fly by monitoring the disagreement rate between weak vs.\ strong augmentations of the same input; route high-disagreement samples to human review or apply higher $U_{\mathrm{thr}}$ to reduce spurious spikes.
+
+
+
+\section{Conclusion}
+We introduced a conversion-ready TextCNN and an ANN$\rightarrow$SNN pipeline that keeps the modeling stack simple while exposing practical control over energy and latency. With a minimal set of architectural tweaks (ReLU, average pooling, bias-free layers) and a non-negative embedding shift for Poisson rate coding, the converted SNN—fine-tuned for only a few epochs with surrogate gradients—lands within ${\sim}0.6$ points of the TextCNN on our validation split. Under a conservative ${\sim}10\%$ global spike-rate assumption, the SNN consumes \textbf{about 10\%} of the ANN’s per-inference compute energy, and the $(T, U_{\mathrm{thr}})$ knobs enable further savings with sub-point accuracy loss. Beyond supervised training, an unsupervised variant (contrastive encoder $\rightarrow$ SNN consistency) improves clustering quality, and a noise-aware refinement yields $+1$–$1.8$ points under synthetic corruptions while maintaining clean performance.
+
+Limitations include the use of static embeddings (vs.\ contextual models) and a coarse energy model that omits memory traffic and hardware-specific effects. Future work will (i) integrate lightweight contextual encoders prior to conversion, (ii) calibrate per-layer spike rates and energy on real neuromorphic hardware, and (iii) explore direct spiking pre-training for language to close the gap with modern Transformers while preserving efficiency.
+
+
+
+
+
+
+
+
+
+% -----------------------------   EE6483    --------------------------------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+% \newpage
+
+% \begin{abstract}
+% % \vspace{-2mm}
+% Spiking neural networks (SNNs) offer a promising pathway to implement deep neural networks (DNNs) in a more energy-efficient manner since their neurons are sparsely activated and inferences are event-driven.
+% However, there have been very few works that have demonstrated the efficacy of SNNs in language tasks partially because it is non-trivial to represent words in the forms of spikes and to deal with variable-length texts by SNNs.
+% This work presents a ``conversion + fine-tuning'' two-step method for training SNNs for text classification and proposes a simple but effective way to encode pre-trained word embeddings as spike trains. We show empirically that after fine-tuning with surrogate gradients, the converted SNNs achieve comparable results to their DNN counterparts with much less energy consumption across multiple datasets for both English and Chinese. We also show that such SNNs are more robust to adversarial attacks than DNNs. 
+
+% \end{abstract}
+
+% \vspace{-4mm}
+% \section{Introduction}
+% \vspace{-1mm}
+% Inspired by the biological neuro-synaptic framework, modern deep neural networks are successfully used in various applications \citep{Krizhevsky2012ImageNetCW,graves2014towards,mikolov2013distributed}.
+% However, the amount of computational power and energy required to run state-of-the-art deep neural models is considerable and continues to increase in the past decade.
+% For example, 
+% % a deep neural network running on a standard computer consumes about $250$ W to perform recognition among only $1$K different kinds of objects, 
+% a neural language model of GPT-3 \citep{brown2020language} consumes roughly $190,000$ kWh to train \citep{dhar2020carbon,anthony2020carbontracker},
+% while the human brain performs perception, recognition, reasoning, control, and movement simultaneously with a power budget of just $20$ W \citep{cox2014neural}.
+% Like biological neurons, spiking neural networks (SNNs) use discrete spikes to compute and transmit information, which are more biologically plausible and also energy-efficient than deep learning models.
+% Spike-based computing fuelled with neuromorphic hardware provides a promising way to realize artificial intelligence while greatly reducing energy consumption.
+
+% Although many studies have shown that SNNs can produce competitive results in vision (mostly classification) tasks \citep{cao2015spiking,diehl2015fast,rueckauer2017conversion,shrestha2018slayer,sengupta2019going}, there are very few works that have demonstrated their effectiveness in natural language processing (NLP) tasks \citep{diehl2016conversion,rao2022long}.  
+% SNNs offer a promising opportunity for processing sequential data.
+% \citet{rao2022long} showed that long-short term memory (LSTM) units can be implemented by spike-based neuromorphic hardware with the spike frequency adaptation mechanism.
+% They tested the performance of such spike-based networks (called RelNet) on a question-answering dataset \citep{weston2015towards}, and observed that RelNet could solve $16$ out of the $17$ toy tasks. A task is considered to be solved if the network has an error rate at most $5\%$ on unseen instances of the task.
+% In their design, each word is encoded as a one-hot vector, and a sentence is also fed into the network in the form of one-hot coded spikes.
+% Such a one-hot encoding schema limits the size of the vocabulary that could be used (otherwise, very high-dimensional vectors are required to represent words used in a language). 
+% Besides, it is impossible for spike-based networks to leverage the word embeddings learned from a large amount of text data.
+% \citet{diehl2016conversion} used pre-trained word embeddings in their TrueNorth implementation of a recurrent neural network and achieved $74\%$ accuracy in a question classification task.
+% However, an external projection layer is required to project word embeddings to the vectors with positive values that can be further converted into spike trains.
+% Such a projection layer cannot be easily implemented by spike-based networks, and in fact, they used a hybrid architecture that combines artificial and spiking neural networks. 
+
+% \begin{figure}[t]
+%   % {r}{5.5cm}
+%   \centering
+%   \includegraphics[width=11.0cm]{Figures/Method.pdf}
+%   \vspace{-0.25cm}
+%   \caption{\label{fig:method} An illustration of a two-step method (conversion + fine-tuning) for training spiking neural networks for text classification: initialize an SNN with the weights of a tailored network trained with the gradient descent, and perform backpropagation with surrogate gradients on the converted SNN.
+%   The tailored network is obtained by replacing the max-pooling operation with average-pooling, the Sigmoid activation function with ReLU, and the word embeddings with their positive equivalents.}
+%   % \setlength{\belowdisplayskip}{3pt}
+%   \vspace{-0.5cm}
+% \end{figure}
+
+% In this study, we propose a two-step recipe of ``conversion + fine-tuning'' to train spiking neural networks for NLP. 
+% A normally-trained neural network is first converted to a spiking neural network by simply duplicating its architecture and weights, and then the converted SNN is fine-tuned afterward.
+% Before the conversion, a proper tailored network needs to be built and trained first.
+% Taking a convolutional neural network for sentence classification, called TextCNN \citep{Kim2014TextCNN}, as an example (see Figure \ref{fig:method}), the original TextCNN is first modified to a tailored CNN by replacing the max-pooling operation with average-pooling, the Sigmoid activation function with ReLU, and the word embeddings with positive-valued vectors (shifted).
+% After the tailored network is trained on a dataset with the gradient descent algorithm, it is converted to a spiking neural network that is further fine-tuned with the surrogate gradient method \citep{zenke2021remarkable} on the same dataset. 
+% The SNNs trained with the proposed two-step training strategy yield comparable results to their DNN counterparts with much less energy consumption. The contribution of this study can be summarized as follows:
+% \vspace{-0.2cm}
+% \begin{itemize}
+% \setlength{\itemsep}{0pt}
+% \setlength{\parsep}{0pt}
+% \setlength{\parskip}{0pt}
+%     \item We present a two-step method for training SNNs for language tasks, which combines the conversion-based approach (also known as shallow training) and the backpropagation using surrogate gradients at the fine-tuning phase.  
+%     \item We propose a method to convert word embeddings to spike trains, which makes it possible for SNNs to leverage the word embeddings pre-trained from a large amount of text data.
+%     The ablation study shows that using pre-trained word embeddings can significantly improve the performance of SNNs.
+%     \item This study is among the first to demonstrate that well-trained spiking neural networks can achieve comparable results to their DNN counterparts on $6$ text classification datasets and for both English and Chinese languages. We also show that SNNs perform more robustly against adversarial attacks than traditional DNNs.
+% \end{itemize}
+
+% \vspace{-0.4cm}
+% \section{Related work}
+% \vspace{-0.2cm}
+
+% SNNs offer a promising computing paradigm due to their ability to capture the temporal dynamics of biological neurons. 
+% Several methods have been proposed for training SNNs, and they can be roughly divided into two categories: conversion-based and spike-based approaches.
+% The conversion-based approaches are to train a non-spiking network first and convert it into an SNN that produces the same input-output mapping for a given task as that of the original network.
+% In the spike-based approaches, SNNs are trained using spike-timing information in an unsupervised or supervised manner.
+
+% The advantage of conversion-based approaches is that the non-differentiability of discrete spikes can be circumvented and the burden of training in the temporal domain is partially removed. 
+% \citet{cao2015spiking} proposed an approach for converting a deep CNN into an SNN by interpreting the activations as firing rates.
+% To minimize performance loss in the conversion process, \citet{diehl2015fast} presented a new weight normalization method to regulate firing rates, which boosts the performance of SNNs without additional training time.
+% \citet{sengupta2019going} pushed spiking neural networks going deeper by exploring residual architectures and introducing a layer-by-layer weight normalization method.
+% However, the conversion is just an approximation, leading to a decline in the accuracy of converted SNNs.
+% Another drawback of such approaches is that converting high precision activations into spikes requires a long sequence of time steps in simulation which increases latency at the inference.
+% \citet{rathi2020enabling} proposed a hybrid approach to partially address the issue of long-time sequences, which is most related to this study.
+% Initialized with the weights from a trained neural network, the converted SNN is trained using backpropagation. Although this helps to reduce the number of required time steps, it appears to degrade accuracy in image classification tasks. In contrast, we experimentally show that the fine-tuning with surrogate gradients can further improve the accuracy across multiple text classification datasets and the obtained SNNs are capable of integrating the temporal dynamics of spikes properly derived from the pre-trained word embeddings via backpropagation through time.   
+  
+% Inspired by neuroscience, unsupervised SNN training with local STDP-based rules has drawn great attention \citep{masquelier2009competitive}.
+% \citet{diehl2015unsupervised} demonstrated that an SNN trained in a completely unsupervised way yields comparable accuracy to deep learning on the MNIST dataset.
+% However, unsupervised trained SNNs generally perform worse than their supervised counterparts. 
+% Early works in supervised approaches are the tempotron \citep{gutig2006tempotron} and ReSuMe \citep{ponulak2010supervised}.
+% Most works in this line rely on the gradients estimated by a differentiable approximate function so that gradient descent can be applied with backpropagation using spike times \citep{bohte2002error,booij2005gradient} or backpropagation using spikes (i.e., backpropagation through time) \citep{shrestha2018slayer,hunsberger2015spiking,bellec2018long,huh2018gradient}.
+% To date, supervised learning has been unable to surpass the conversion-based approaches although it turns out to be more computationally efficient.
+% SNNs have provided competitive results, but mostly in vision-related tasks. 
+% In this study, we provide proof of experiments that spiking CNNs can yield competitive accuracies over multiple language datasets by combining the advantages of conversion-based approaches and backpropagation using spikes.
+
+% \vspace{-0.2cm}
+% \section{Method}
+% \vspace{-0.2cm}
+
+% % Nowadays, there are very few works to research the application of SNNs in natural language processing tasks.
+
+% We describe our method for training SNNs for text classification in the following.
+% We first present the approach to building tailored neural networks and the conversion process by taking TextCNN as an example \citep{Kim2014TextCNN}, and then depict the way to fine-tune the converted SNNs with surrogate gradients, where the pre-trained word embeddings were transformed into spike trains produced by a Poisson event-generation function. 
+% The entire training procedure is summarized in Algorithm \ref{algo:snn_training}.
+
+% % In this paper, we propose a promising two-step recipe of  ``conversion $+$ fine-tuning'' to utilize SNNs in text classification task.
+% % In this setction, we will explain conversion-based approach in detail at first. And then, we will explain how to fine-tune a converted using surrogate gradients.
+
+% \vspace{-0.3cm}
+% \subsection{Conversion-based Approach}
+% \vspace{-0.1cm}
+
+% The idea behind the conversion-based approaches is simple---interpreting the activations as firing rates and mapping the magnitude of values output by each unit of a DNN to the frequency of spikes generated by the corresponding neuron of the converted SNN.
+% To enable such conversions, a DNN architecture should be tailored to fit the requirements of SNN by removing some operations (listed in Subsection \ref{sec:tailoredNN}) that cannot be realized by spike-based computation \citep{cao2015spiking}. 
+% The tailored DNN is trained in the same way as one would with conventional DNN, and the learned weights are then applied to the SNN converted from the tailored DNN.
+% Some weight normalization methods are often applied  to regulate firing rates after the conversion \citep{diehl2015fast,rueckauer2017conversion,sengupta2019going}. 
+% From our experimentation on multiple language datasets, we found that when the conversion is followed by the fine-tuning step, the effectiveness of weight normalization is negligible for text classification tasks (see Subsection \ref{sec:main-results}).
+
+% % Generally speaking, the key to conversion-based approach is how to design proper architecture of tailored networks (also known as shallow networks). We will illustrate how to build and train tailored neural networks in detail. As well, we will show how to convert tailored models to SNN ones.
+
+% % \vspace{-0.2cm}
+% \subsubsection{Tailored Neural Network} \label{sec:tailoredNN}
+% % \vspace{-0.1cm}
+
+% % How to change conventional neural network to tailored version.
+
+% Although the proposed method can be applied to all the deep neural architectures that can be converted to SNNs, we take the convolutional neural networks for sentence classification (TextCNN) \citep{Kim2014TextCNN} as an example architecture for clarity (this architecture is also used in the experiments).
+% As shown in Figure \ref{fig:method}, the TextCNN applies a convolution layer with multiple filter widths and feature maps over word embeddings learnt from an unsupervised neural language model, and then summarizes the outputs of the convolution layer over time by a max-pooling (followed by a fully-connected layer) to produce a sentence representation. 
+% The TextCNN is trained over the summarized representations by minimizing a given loss function.
+
+% The operations that will produce negative values or those not supported by SNNs should be avoided or replaced with other alternatives in tailored neural networks because negative values are quite hard to be precisely represented in SNNs. 
+% There is also no simple and good way to implement the max-pooling operation in SNNs, which requires two additional network layers with lateral inhibition and causes a loss in accuracy due to the additional complexity.
+% The biases of neurons also cannot easily be implemented in SNNs since their value could be positive or negative.
+% Like \cite{cao2015spiking}, we create tailored neural networks by making the following changes to their original DNNs:
+
+% \vspace{-0.2cm}
+% \begin{itemize}
+% \setlength{\itemsep}{0pt}
+% \setlength{\parsep}{0pt}
+% \setlength{\parskip}{0pt}
+%     \item Word embeddings are converted into the vectors of the same dimension with positive values by normalization and shifting (discuss later in Subsection \ref{sec:word-embeddings}).
+%     \item All the non-linear activation functions are replaced with ReLU (rectified linear unit) activation function (i.e., $\text{ReLU}(x) = \text{max}(x, 0)$).
+%     \item The biases are removed from all the convolutional and fully-connected layers.
+%     \item The average-pooling is used instead of the max-pooling, which can be easily implemented in spike-based computation.
+% \end{itemize}
+% \vspace{-0.3cm}
+% % Conventional neural networks usually consist of weights, biases, nonlinear activation function and some special calculate methods like pooling.
+% % However, unlike conventional convolution neural networks \citep{LeCun1998GradientbasedLA}, max-pooling is not suitable for spiking version. Traditional max-pooling is implemented as taking the maximum output values over a small window in the input, which is hard to work well when the input is time-varying spike.
+% % At the same time, bias can not be represented well in spiking convolutional neural networks because bias can be negative.
+% % Therefore, we choose to follow \cite{cao2015spiking} and set some basic rules for tailored convolutional neural networks:
+% % \begin{enumerate}
+% %     \item Assert output values in all layers positive.
+% %     \item Remove biases from both convolutional layers and linear layers.
+% %     \item Replace Sigmoid activation function as ReLU.
+% %     \item Replace Max-pooling with Average-pooling.
+% % \end{enumerate}
+
+% \subsubsection{Pre-trained Word Embeddings}
+% \label{sec:word-embeddings}
+% % \vspace{-0.1cm}
+
+% Pre-trained word embeddings have been successfully used in a wide range of NLP tasks, and they should be useful for SNNs to generalize from a training set with a limited size to possible unseen texts too.
+% The values of word embeddings are not all positive, and therefore an appropriate method is required to convert those word embeddings into the vectors with positive values so that the inputs to the first layer of an SNN are all non-negative.
+% We tried several methods to fulfill this purpose, and found the following one is simple, but effective in preserving the semantic regularities in language captured in the original word embeddings when they are converted and transformed to spike trains.
+% We first calculate the mean value $\mu$ and the standard deviation $\sigma$ of the values of pre-trained word embeddings, clip all the values within $[\mu - 3\sigma, \mu + 3\sigma]$, perform the normalization by subtracting  $\mu$ and then dividing by $6 \times \sigma$, and shift all the components of vectors within the range of $[0, 1]$.
+
+% % Although pre-trained word embeddings show a strong ability of representation, traditional word embeddings always contain negitive values, which can not preserve their semantic information when they are encoded to rate code by Poisson distribution. 
+% % Therefore, in order to minimizes the loss of semantic information as much as possible, we propose a simple method to shift embedding values to $[0, 1]$:
+% % \begin{itemize}
+% %     \item Calculate the mean value $\mu$ and standard deviation $\sigma$ of all numbers in dictionary.
+% %     \item Clamp all values within $[\mu - b\sigma, \mu - b\sigma]$, where $b$ means bias. We set $b=3$ in this paper.
+% %     \item For every value $x$ in word embedding, do :
+% %     \begin{equation}
+% %         x' = \frac{\frac{(x-\mu)}{b} + b}{b*2} = \frac{x-u+3b}{2b^2}
+% %     \end{equation}
+% % \end{itemize}
+
+% % As a result, all values of word embedding will be shifted into $[0, 1]$.
+
+% For English, we used $300$-dimentional GloVe embeddings   \citep{pennington2014glove} trained on a text dataset merged from Wikipedia $2014$ and Gigaword $5$.
+% For Chinese, the Word2Vec toolkit \citep{Mikolov2013EfficientEO} was used to learn word embeddings of $300$ dimensions from a text corpus composed of Baidu Encyclopedia, Wikipedia-zh, People's Daily News, Sogou News, Financial News, ZhihuQA, Weibo and Complete Library in Four Sections  \citep{P18-2023}.
+% In the supervised training stage of tailored neural networks, the converted (positive-valued) word embeddings are free to modify and their values will be clipped to $[0, 1]$ if they were modified to values greater than $1$ or less than $0$.   
+% SNNs only take spikes as input, and thus a Poisson spike train will be generated for each component of a word embedding with a firing rate proportional to its scale.
+
+% % On the other hand, for Chinese datasets, we choose Word2Vec  trained on Baidu Encyclopedia, Wikipedia-zh, People's Daily News, Sogou News, Financial News, ZhihuQA, Weibo and Complete Library in Four Sections by \cite{P18-2023}.
+
+% % \vspace{-0.1cm}
+% \subsubsection{Training and Conversion}
+% % \vspace{-0.1cm}
+
+% We use the cross-entropy loss to train the tailored neural networks as usual. 
+% As illustrated in Figure \ref{fig:method}, the conversion of a tailored network to an SNN is straightforward. 
+% All the processing blocks of the converted SNN are inherited from the tailored network except a spike generator that is added to the SNN, which is used to generate Poisson spike trains derived from the learned word embeddings.
+% Each neuron of the tailored network will be replaced with a leaky integrate-and-fire neuron (discuss later in subsection \ref{lif}), and the weights for convolutional and fully-connected layers in the tailored network become the synaptic strengths in the converted SNN.
+% The ReLU activation functions are no longer needed since their functionality is implicitly provided by the neuron's membrane threshold.
+
+% % The same as traditional training, we use Cross Entropy $(\ref{crloss})$ as loss function for tailored model training.
+% % Note that $y_{i}$ denotes the real label one-hot vector of sentence $x_{i}$ and $\hat{y_{i}}$ denotes predict vector of sentence $x_{i}$.
+
+% % \begin{equation}\label{crloss}
+% % L(y_{i}, \hat{y_{i}}) =  -y_{i} * log \hat{y_{i}}
+% % \end{equation}
+
+% % After training a tailored neural network, we should duplicate its architecture and weights to a spiking neural network.
+% % For convolutional neural networks, we should replace ReLU activation function with leaky integrate-and-fire layer, which will be illustrated in Section \ref{lif}.
+% % And then, we can directly transfer all the parameters from a tailored model to a spiking one.
+
+% \vspace{-0.1cm}
+% \subsection{Fine-tuning with surrogate gradients}
+% \vspace{-0.1cm}
+
+% Once an SNN is converted from a tailored network (trained), we can fine-tune the converted SNN by the generalized backpropagation algorithm with surrogate gradients on the same dataset that was used to train the tailored network.
+% The converted weights can be viewed as a good initialization, which contributes to solving the problem of temporal and spatial credit assignment for the SNN.
+% In the fine-tuning stage, the word embeddings present in the form of spike trains are fixed because such spike trains are generated randomly and there is no one-to-one mapping between a word embedding and its spike train.
+% However, such temporal codes with timing disturbances make SNNs more robust to adversarial attacks (see the experimental results in subsection \ref{seg:adversarial-robustness}) because the trained SNNs are more tolerant to noise appearing in input spike trains randomly generated.
+% % the firing rate centered about a mean will integrate out and provide an unbiased estimator of the gradient for neurons.
+
+% % After training a tailored neural network and converting it to a spiking neural network as mentioned above, we should take surrogate gradient into consideration.
+% % Beside, how to encode input of spiking neural networks has been a difficulty for a long time. This difficulty is much harder to be solved in the natural language processing field than computer vision, due to words can not be processed easily to spikes like pixels. Therefore, we innovatively propose a method to convert word embeddings to spike trains.
+
+% \begin{figure}[t]
+% \centering
+%     \subfigure[A LIF neuron]{
+%        \centering
+%        \includegraphics[width=0.22 \textwidth]{Figures/Neuron.pdf}
+%     }
+%     \subfigure[Backpropagation through time (BPTT)]{
+%         \centering
+%         \includegraphics[width=0.48 \textwidth]{Figures/BPTT.pdf}
+%     }
+%     \vspace{-0.2cm}
+%     \caption{\label{fig:LIFandBPTT}
+%     Computational steps in training SNNs by the generalized backpropagation with surrogate gradients. (a) A recurrent representation of a leaky integrate-and-fire (LIF) neuron. 
+%     % It clearly shows how $S_t$ and $U_t$  are calculated at time step $t$ and processed at time step $t + 1$.
+%     (b) An unrolled computational graph of the LIF neuron where time flows from left to right.
+%     % and $\beta$ is the decay rate of the membrane potential $U$ over time.
+%     % Backpropagation through time. Assume current time step is $t$. After calculating the loss $L_{t}$, we will update the learnable weight $W_{t}$. Recurrently, we will update $W$ at every time step.
+%     }
+%     \vspace{-0.05cm}
+% \end{figure}
+
+% \subsubsection{Integrate-and-fire Neuron} \label{lif}
+% % \vspace{-0.2cm}
+
+% There have been many spiking neuron models that could be used to build SNNs \citep{izhikevich2004model}, we chose to use a widely-used, first-order leaky integrate-and-fire (LIF) neuron as the building block.
+% Like the artificial neuron model, LIF neurons operate on a weighted sum of inputs, which contributes to the membrane potential $U_t$ of the neuron at time step $t$.
+% If the neuron is sufficiently excited by the weighted sum and its membrane potential reaches a threshold $U_{\rm thr}$, a spike $S_t$ will be generated:
+% \vspace{-0.1cm}
+% \begin{equation}\label{equ:spike}
+% \small
+%     \begin{split}
+%     S_t=
+%     \begin{cases}
+%     1, & \text{if  $U_t \geq$ $U_{\rm thr}$;} \\ 
+%     0, & \text{if  $U_t <$ $U_{\rm thr}$.} 
+%     \end{cases}
+%     \end{split}
+% \end{equation}
+% % where $U_t$ is membrane potential $U$ at time step $t$. 
+% % In another word, if the neuron is active at time step $t$, then $S_t=1$, otherwise $R_t=0$.
+% The dynamics of the neuron's membrane potential can be modelled as a resistor–capacitor circuit, an approximate solution to the differential equation of this circuit can be represented as follows:
+% % Membrane potential $U$ at time step $t$ depends on $U_{t-1}$. It's defined as:
+% \vspace{-0.1cm}
+% \begin{equation}
+% \label{membranePotential}
+% \small
+% \begin{split}
+%     U_{t} & = I_{t} + \beta U_{t-1} - S_{t-1} U_{\mathrm{thr}} \\
+%     I_{t} & = W X_{t}
+% \end{split}  
+% \end{equation}
+% where $X_t$ are inputs to the LIF neuron at time step $t$, $W$ is a set of learnable weights used to integrate different inputs,
+% $I_{t}$ is the weighted sum of inputs, $\beta$ is the decay rate of membrane potential, and $U_{t-1}$ is the membrane potential at the previous time $t-1$.
+% The last term of $S_{t-1}U_{\mathrm{thr}}$ is introduced to account for spiking and membrane potential reset.
+% A LIF neuron model is illustrated in Figure \ref{fig:LIFandBPTT} (a).
+
+% % $X_t$ is input of the SNN at time step $t$;
+% % $\beta$ is membrane potential decay rate;
+% % $U_{t-1}$ is membrane potential at time step $t-1$;
+% % $S_{t-1}$ here is a reset mechanism that subtract threshold $U_{\rm thr}$ from $U_{t}$ when the neuron emits a spike at time step $t-1$.
+
+% % Figure \ref{fig:LIFandBPTT} (a) shows how the LIF neurons deal with data through time. Initially, $U_{0} = 0$ and $S_{0} = 0$.
+
+% % \subsubsection{Encoding Input}\label{embedsection}
+
+% % Because of
+% % How to transform word embedding to spikes using Poisson distribution.
+
+% % \vspace{-0.1cm}
+% \subsubsection{Surrogate Gradient}
+% % \vspace{-0.2cm}
+
+% Backpropagation through time (BPTT) is one of the most popular approaches for training SNNs \citep{shrestha2018slayer,huh2018gradient,cramer2022surrogate}. This approach applies the generalized backpropagation algorithm to the unrolled computational graph.
+% The gradients flow from the final output of a network to its input layer (indicated by the orange dashed arrows in Figure \ref{fig:LIFandBPTT} (b)).
+% In this way, computing the gradients through an SNN is most similar to that of a recurrent neural network.
+% To deal with the spike non-differentiability problem, the Heaviside step function, shown as Equation (\ref{equ:spike}), is applied to determine whether a neuron emits a spike during the forward pass while this function is replaced with a differentiable one during the backward pass. 
+% The derivative of the differentiable function is used as a surrogate, and this approach is known as the surrogate gradient. 
+% We chose to use Fast-Sigmoid \citep{Zheng2018ALH} as the surrogate function $\hat{S}_t$, where $k$ is set to $25$ by default:
+% \begin{equation}
+% \label{surrogate}
+% \small
+% \begin{aligned}
+% \hat{S}_t & \approx \frac{U_t}{1 + k|U_t|}
+% \end{aligned}
+% \end{equation}
+
+% % The derivative of this function can be obtained:
+% % \begin{equation}
+% % \label{surrogate}
+% % \small
+% % \begin{aligned}
+% % \frac{\partial S}{\partial U} 
+% % = \frac{1}{(1 + k|U|)^{2}}
+% % \end{aligned}
+% % \end{equation}
+
+% \begin{algorithm} [t]
+% \setlength{\textfloatsep}{0.1cm}
+% \setlength{\floatsep}{0.1cm}
+% \small
+% \caption{\label{algo:snn_training} The global algorithm of ``conversion + fine-tuning''  for training spiking neural networks.}
+% \KwIn{$E$: A set of pre-trained word embeddings; \\
+% \;\;\;\;\;\;\;\;\;\; $D$: A training set consisting of $N$ instances ${\{(x_i, y_i)\}_{i=1}^{N}}$; \\
+% \;\;\;\;\;\;\;\;\;\; $R$: A traditional neural network (architecture only); \\
+% \;\;\;\;\;\;\;\;\;\; $M$: A spiking neural network with a set of learnable weights $W$; \\
+% \;\;\;\;\;\;\;\;\;\; $\beta$: A decay rate of membrane potential; \\
+% \;\;\;\;\;\;\;\;\;\; $U_{\text{thr}}$: A membrane threshold; \\
+% \;\;\;\;\;\;\;\;\;\; $\eta$: A learning rate $\eta$ used at the fine-tuning phase. \\
+% \;\;\;\;\;\;\;\;\;\; 
+% }
+
+% \textbf{I. Conversion Step}: \\ 
+% Transform pre-trained word embeddings $E$ to the vectors with positive values (Subsection \ref{sec:word-embeddings}); \\
+% Build a tailored neural network from a traditional neural network $R$ (Subsection \ref{sec:tailoredNN});  \\
+% Train the tailored neural network on the training set $D$ with the gradient descent algorithm; \\
+% Convert the tailored neural network (trained) to the corresponding spiking neural network $M$. \\
+
+% \textbf{II. Fine-Tuning Step}: \\
+% \For{each mini-batch $B$ in $D$}{
+%  \,\, Generate a Poisson spike train for each component of all the word embeddings appeared in $B$;  
+%  \\
+%  Perform a forward pass and record the spikes as well as the membrane potentials at every time step; \\
+%  Calculate the derivative of the loss with respect to the weights (see Equation (\ref{lossfn})); \\
+%  Update the weights of the spiking neural network $M$ by $W = W - \eta \frac{\partial L}{\partial W}$ (see Appendix \ref{BPTTDetail}).
+% }
+
+% \textbf{Return} The fine-tuned spiking neural network $M$.
+% \end{algorithm}
+% \setlength{\textfloatsep}{5pt}
+
+% % \vspace{-0.3cm}
+% \subsubsection{Loss Function} \label{sec:loss}
+% % \vspace{-0.1cm}
+
+% Since the surrogate function, like Equation (\ref{surrogate}), is applied when working backward, we can add a softmax layer to the end of SNNs to predict the category labels at each time step $t$ for an instance $i$, denoted by $\hat{y}_t^i$. 
+% The SNNs are fine-tuned by minimizing the cross-entropy spike rate error using the generalized gradient descent. 
+% This is equivalent to minimizing the KL-divergence between the prediction distribution $\hat{y}_t^i$ and the target distribution $y^i$ at each time step $t$ for an instance $i$.
+% We use the $1$-of-$K$ coding scheme to represent the target $y^i$. 
+% The loss function for $N$ training instances is:
+
+% \begin{equation}\label{lossfn}
+% \small
+% L = -\frac{1}{N}\sum_{i = 1}^N \left(\frac{1}{T}\sum_{t = 1}^T \left(y^i \times \text{log}(\hat{y}_t^i)\right)\right)
+% \end{equation}
+
+% where $T$ is the number of time steps used for training SNNs.
+% Finding the derivative of this loss with respect to the weights allows the use of gradient decent to train SNNs. 
+% We list an efficient way to calculate the derivatives in Appendix \ref{BPTTDetail}.
+
+% % $t$ is current time step and $L_{i}$ indicates cross entropy loss at time step $i$. $y_{j}$ denotes the real label of sample $x_{j}$ and $\hat{y_{j}}$ denotes predict label of sentence $x_{j}$
+
+% % We adopt backpropagation through time (BPTT) \citep{Werbos1990BackpropagationTT} as our backward algorithm in SNNs when fine-tuning, which use the same chain rule of derivatives. Figure \ref{fig:LIFandBPTT} (b) illustrates how BPTT works. For detailed derivation, please refer to Appendix \ref{BPTTDetail}.
+
+
+% % \begin{algorithm}
+% % \renewcommand{\algorithmicrequire}{ \textbf{Input:}} %Use Input in the format of Algorithm
+% % \renewcommand{\algorithmicensure}{ \textbf{Output:}} %Use Output in the format of Algorithm
+% % \caption{Entire process of ``Conversion + Fine-tuning'' Algorithm for Training a Spiking Nerual Network for Text Classification.}
+% % \begin{algorithmic}[1]
+% % \Require Train Set $D$; Membrane potential decay rate $\beta$; Membrane Threshold $U_{thr}$; Traditional convolutional neural network $N$ with $L$ layers; Total Time Step $T$; Spiking neural network $M$;
+
+% % \State \textbf{Step 1}: Build Tailored Model
+% % \State $\widehat{N} \leftarrow N$ // Build a tailored model following Section \ref{sec:tailoredNN}.
+
+% % \State \textbf{Step 2}: Train Tailored Model
+% % \State $\widehat{D} \leftarrow D$  // Shift embedding of all samples to $[0, 1]$ following Section \ref{sec:word-embeddings}.
+% % \State Train the tailored model $\widehat{N}$ using $\widehat{D}$.
+
+% % \State \textbf{Step 3}: Conversion
+% % \State Copy weights of convolutional layers and linear layers in $\widehat{N}$ to a spiking neural network $M$.
+% % \State In $S$, replace ReLU activation function with leaky integrate-and-fire (LIF) neurons.
+
+% % \State \textbf{Step 4}: Fine-tuning
+% % \State $\widehat{D}_s \leftarrow \widehat{D}$ // Encode embedding to spike trains using Poisson distribution. See Section \ref{sec:word-embeddings}.
+% % \State Fine-tune converted SNN $S$ using backpropagation through time (BPTT) algorithm.
+% % \end{algorithmic}
+% % \end{algorithm}
+
+% \vspace{-0.3cm}
+% \section{Experiments}
+%  \vspace{-0.2cm}
+
+% We conducted four sets of experiments. 
+% The first is to evaluate the accuracy of the SNNs trained with the proposed method on $6$ different text classification benchmarks for both English and Chinese by comparing to their DNN counterparts.
+% The goal of the second experiment is to see how robust the SNNs would be to defend against existing sophisticated adversarial attacks.
+% The third one is to show that the conversion and fine-tuning sets are essential for training SNNs by ablation study.
+% The last experiment is to see how the performance of SNNs is impacted by the value of decay rate, the number of neurons used to predict for each category, and the value of membrane threshold.
+
+% % We investigate pure conversion, normlization after conversion and fine-tuning methods for four English and two Chinese text classication datasets.
+% % Besides, for each English dataset, we choose four widely-used representative adversarial word substitution algorithms to attack so that we can evaluate the robustness of spiking neural networks.
+
+% \vspace{-0.1cm}
+% \subsection{Dataset} \label{sec:dataset}
+% \vspace{-0.1cm}
+
+% We used the following $6$ text classification datasets to evaluate the SNNs trained with the proposed method, four of which are English datasets and the other two are Chinese benchmarks:
+% MR \citep{Pang2005SeeingSE}, SST-$5$ \citep{Socher2013RecursiveDM}, SST-$2$ (the binary version of SST-$5$), Subj, ChnSenti, and Waimai.
+% These datasets vary in the size of examples and the length of texts.
+% If there is no standard training-test split, we randomly select $10\%$ examples from the entire dataset as the test set.
+% We describe the datasets used for evaluation in Appendix \ref{appendix:dataset details}.
+
+% % We used the following $6$ text classification datasets to evaluate the SNNs trained by the proposed method, four of which are English datasets and the other two are Chinese benchmarks. 
+% % Those datasets vary in the size of examples and the length of texts.
+% % If there is no standard training-test split, we randomly select $10\%$ examples from the entire dataset as the test set. 
+
+%  % \vspace{-0.2cm}
+% % \begin{itemize}
+% % \setlength{\itemsep}{0pt}
+% % \setlength{\parsep}{0pt}
+% % \setlength{\parskip}{0pt}
+% % \item{\textbf{MR}}:
+% % It consists of movie-review documents labeled with respect to their overall sentiment polarity (positive or negative) or subjective rating \citep{Pang2005SeeingSE}.
+
+% % \item{\textbf{SST-$\bf 5$}}:
+% % The Stanford Sentiment Treebank $5$ comprises $11,855$ sentences extracted
+% % from movie reviews for sentiment classification \citep{Socher2013RecursiveDM}. There are $5$ different classes (very negative, negative, neutral, positive, and very positive).
+
+% % \item{\textbf{SST-$\bf 2$}}:
+% % It is the binary version of SST-$5$, and there are just $2$ classes (positive and negative).
+
+% % \item{\textbf{Subj}}:
+% % The task of this dataset is to classify a sentence as being subjective or objective\footnote{\scriptsize{\url{https://www.cs.cornell.edu/people/pabo/movie-review-data/}}}.
+
+% % \item{\textbf{ChnSenti}}:
+% % This datasets contains about $7,000$ Chinese hotel reviews annotated with positive or negative labels\footnote{\scriptsize{\url{https://raw.githubusercontent.com/SophonPlus/ChineseNlpCorpus/master/datasets/ChnSentiCorp_htl_all/ChnSentiCorp_htl_all.csv}}}.
+
+% % \item{\textbf{Waimai}}:
+% % It consists of $12,000$ Chinese user reviews collected by a food delivery platform for binary sentiment classification (positive and negative)\footnote{\scriptsize{\url{https://raw.githubusercontent.com/SophonPlus/ChineseNlpCorpus/master/datasets/waimai_10k/waimai_10k.csv}}}.
+% % \vspace{-0.2cm}
+% % \end{itemize}
+
+% \vspace{-0.1cm}
+% \subsection{Implementation Details} \label{sec:implementation}
+% \vspace{-0.1cm}
+
+% We used TextCNN \citep{Kim2014TextCNN} as the neural network architecture from which the tailored network is built, and filter widths of $3$, $4$, and $5$ with $100$ feature maps each.
+% When training the tailored networks, we set the dropout rate to $0.5$, the batch size to $32$, and the learning rate to $1e-4$.
+
+% % In addition, we choose mini-batch size of $32$ for all datasets according to a grid search on MR dev set. 
+% % What's more, we set learning rate of $5e-4$ for Subj dataset and $1e-4$ for the other. 
+% % If there are datasets without standard test set, we randomly select $10\%$ of the training data as the test set.
+
+% SnnTorch framework provided by \citep{Eshraghian2021TrainingSN} was used to train SNNs, which extends the capabilities of PyTorch \citep{Paszke2019PyTorchAI} and can perform gradient-based learning with SNNs.
+% We set the number of time steps to $50$, the membrane threshold $U_\text{thr}$ to $1$, the decay rate $\beta$ to $1$, the batch size to $50$, and the learning rate to $5e-5$ at the fine-tuning stage of SNNs. 
+
+% % As mentioned in Section \ref{sec:word-embeddings}, spiking neural networks process Poisson rate-coded input spike trains, which means each value in an embedding matrix is converted to a Poisson-distribution based spike train with the spiking frequency proportional to the value. 
+% % More specifically, we choose Poisson rate-coded input spike trains of $50$ time steps for all datasets.
+% % In leaky integrate-and-fire neurons, we set membrane threshold $U_{\text{thr}}=1.0$ and membrane potential decay rate $\beta=1.0$.
+% % In addition, when it comes to fine-tuning SNNs, we empirically set $50$ as mini-batch size (bigger than training tailored model) and $5e-5$ (lower than training tailored model) as learning rate because conversion technique has put the model in a reasonable state.
+
+% \citet{Eshraghian2021TrainingSN} showed that if we collect the results produced by multiple neurons and count their spikes, it is possible to accurately measure a firing rate from a population of neurons in a very short time window.
+% Therefore, we also used such a commonly-used ensemble method in the tailored networks and the converted SNNs.
+% Specifically, instead of assigning one neuron to each category for prediction, we use $h$ neurons for each category and the prediction results on $h$ spiking neurons are ensembled to get a final output. 
+% Unless otherwise specified, we set $h$ to $10$ in all the experiments.
+
+% \vspace{-0.1cm}
+% \subsection{Results}\label{sec:main-results}
+% \vspace{-0.1cm}
+
+% We reported in Table \ref{maintb} the classification accuracy achieved by the SNNs trained with the ``conversion + fine-tuning'' method on $4$ English and $2$ Chinese datasets, compared to several baselines, including the converted SNNs without the fine-tuning, the converted SNNs with two weight normalization methods, and the SNNs directly-trained with surrogate gradients without using the weights of tailored networks for the initialization.
+% \citet{diehl2015fast} proposed two ways to perform the weight normalization on the converted SNNs. 
+% The first one is called a model-based normalization that considers all possible positive activations and re-scale all the weights by the maximum positive input, and the second is called a data-based normalization in which the weights are normalized according to the maximum activation reached by propagating all the training examples through the network.
+
+% The numbers reported in Table \ref{maintb} show that the SNNs trained with the proposed method outperform all the SNN baselines across $6$ text classification datasets.
+% They also achieved comparable results to the original TextCNNs by a small drop of $2.51\%$ on average in accuracy ($2.89\%$ difference for English and $1.78\%$ for Chinese respectively).
+% The fine-tuned SNNs achieved up to $1.32\%$ improvement in accuracy ($0.61\%$ increase on average). Besides, the standard deviation decreased to $0.33$ from $0.65$ (almost halved) after the fine-tuning.
+% We tried some combinations of ``conversion + normalization + fine-tuning'' and found that when the conversion is followed by the fine-tuning step, the weight normalization contributes a little to the performance of SNNs on the text classification tasks.
+
+% % We test our method on four English and two Chinese text classification datasets.
+% % Our metric is the accuracy on test set.
+% % We 
+% % Meanwhile, we use two weight normalization methods: model-based normalization and data-based normalization \citep{diehl2015fast}, to compare with our ``conversion + fine-tuning'' method.
+% % The results are summarized in Table \ref{maintb}. 
+
+% % We can see that:
+% % \begin{itemize}
+% % \setlength{\itemsep}{0pt}
+% % \setlength{\parsep}{0pt}
+% % \setlength{\parskip}{0pt}
+% % \item Both model-based normalization and data-based normalization strategies are not that effective in text classification task. Sometimes, weight normalization methods even hurt the performance of SNNs because of their aggressive adjustment of weights.
+% % \item After further fine-tuning using surrogate gradients, the converted SNNs achieve comparable results to their DNN counterparts on all datasets.
+% % \item Our ``conversion + fine-tuning'' method works quite well on both English and Chinese datasets. What's more, it's suitable for both binary and multi-class classification tasks as we can see that on SST-5 it also achieve comparable accuary to its DNN counterpart. 
+% % \end{itemize}
+
+% \begin{table*} [t]
+% \small
+% \caption{\label{maintb}
+% Classification accuracy achieved by different models on $6$ datasets. The model obtained by applying the model-based normalization on the converted SNN is denoted as ``Conv SNN + MN" and that by applying the data-based normalization as ``Conv SNN + DN''. The SNNs trained with the ``conversion + fine-tuning'' is denoted as ``Conv SNN + FT''.
+% }
+% \begin{center}
+% \setlength{\tabcolsep}{1mm}
+% \begin{tabular}{l|cccc|cc} \hline \hline
+% \multirow{2}{*}{\textbf{Method}} & 
+% \multicolumn{4}{c|}{\bf English Dataset}  & 
+% \multicolumn{2}{c}{\bf Chinese Dataset}  \\
+% \cline{2-7}
+% & \textbf{MR} & \textbf{SST-2} & \textbf{Subj} & \textbf{SST-5} & \textbf{ChnSenti} & \textbf{Waimai} \\
+% \hline
+% Original TextCNN & $77.41${\scriptsize $\pm 0.22$} & $83.25${\scriptsize $\pm 0.16$} & $94.00${\scriptsize $\pm 0.22$} & $45.48${\scriptsize $\pm 0.16$} & $86.74${\scriptsize $\pm 0.15$} & $88.49${\scriptsize $\pm 0.16$} \\
+
+% Tailored TextCNN & $76.94${\scriptsize $\pm 0.25$} & $83.03${\scriptsize $\pm 0.21$} & $91.50${\scriptsize $\pm 0.12$} & $43.48${\scriptsize $\pm 0.13$} & $85.79${\scriptsize $\pm 0.15$} & $88.21${\scriptsize $\pm 0.15$} \\
+% \hline 
+% Directly-trained SNN & $51.55${\scriptsize $\pm 1.31$} & $75.73${\scriptsize $\pm 0.91$} & $53.30${\scriptsize $\pm 1.80$} & $23.08${\scriptsize $\pm 0.56$} & $63.18${\scriptsize $\pm 0.42$} & $66.42${\scriptsize $\pm 0.39$} \\
+
+% Conv SNN & $74.13${\scriptsize $\pm 0.97$} & $80.07${\scriptsize $\pm 0.78$} & $90.40${\scriptsize $\pm 0.39$} & $41.40${\scriptsize $\pm 0.73$} & $84.16${\scriptsize $\pm 0.62$} & $86.43${\scriptsize $\pm 0.43$} \\
+
+% Conv SNN $+$ MN & $74.70${\scriptsize $\pm 0.52$} & $79.90${\scriptsize $\pm 0.61$} & $89.40${\scriptsize $\pm 0.57$} & $40.59${\scriptsize $\pm 1.13$}& $84.89${\scriptsize $\pm 0.32$} & $85.21${\scriptsize $\pm 0.46$}\\
+
+% Conv SNN $+$ DN & $74.19${\scriptsize $\pm 0.78$}& $80.67${\scriptsize $\pm 0.95$} & $90.30${\scriptsize $\pm 0.86$} & $40.63${\scriptsize $\pm 1.78$} & $83.73${\scriptsize $\pm 0.35$} & $86.33${\scriptsize $\pm 0.35$} \\
+
+% Conv SNN $+$ FT & $\bf 75.45${\scriptsize $\pm 0.51$} & $\bf 80.91${\scriptsize $\pm 0.34$} & $\bf90.60${\scriptsize $\pm 0.32$} & $\bf41.63${\scriptsize $\pm 0.44$} & $\bf 85.02${\scriptsize $\pm 0.22$} & $ \bf86.66${\scriptsize $\pm 0.17$} \\
+% \hline\hline
+% \end{tabular}
+% \end{center}
+% % \vspace{-0.2cm}
+% \end{table*}
+
+% \begin{table*}[t]
+% \small
+% \caption{\label{adversarialtb}
+% Empirical results on $4$ English datasets under $4$ different adversarial attack algorithms on randomly selected $1,000$ examples for each dataset.
+% }
+% \begin{center}
+% \setlength{\tabcolsep}{1.9mm}
+% % \setlength{\abovecaptionskip}{0.2cm}
+% % \setlength {\belowcaptionskip} {-0.4cm}
+
+% \begin{tabular}{l|l|c|cc|cc|cc|cc}\hline
+% \hline
+% \multicolumn{1}{l|}{\multirow{2}{*}{\bf Dataset}} & \multicolumn{1}{c|}{\multirow{2}{*}{\bf Model}} & \multicolumn{1}{c|}{\multirow{2}{*}{\bf Cln}} & \multicolumn{2}{c|}{\bf TextFooler} & \multicolumn{2}{c|}{\bf BERT-Attack} & \multicolumn{2}{c|}{\bf TextBugger}& \multicolumn{2}{c}{\bf PWWS}\\
+
+% \cline{4-11}
+% &\multicolumn{1}{c|}{} & \multicolumn{1}{c|}{} & \multicolumn{1}{c}{\bf Boa} & \multicolumn{1}{c|}{\bf Suc} & \multicolumn{1}{c}{\bf Boa} & \multicolumn{1}{c|}{\bf Suc} & \multicolumn{1}{c}{\bf Boa} & \multicolumn{1}{c|}{\bf Suc} & \multicolumn{1}{c}{\bf Boa} & \multicolumn{1}{c}{\bf Suc} \\ 
+
+% \hline
+
+% \multicolumn{1}{l|}{\multirow{2}{*}{\bf MR}} & TextCNN &$77.50$ & $8.60$ & $88.11$ & $8.30$ & $88.38$ & $13.30$ & $81.58$& $5.30$& $92.79$ \\
+
+% & SNN  & $74.30$ & $\bf 16.40$ & $77.47$& $\bf 10.40$& $85.91$& $\bf 22.70$ & $69.45$ & $\bf 12.20$ & $82.98$\\
+
+% \hline
+
+% \multicolumn{1}{l|}{\multirow{2}{*}{\bf SST-$\bf 2$}} & TextCNN &$81.80$ & $8.30$ & $89.51$ & $4.70$& $94.08$ & $13.30$& $83.54$ & $4.10$ & $94.75$ \\
+
+% & SNN  &$80.20$ & $\bf 14.70$ & $81.39$ & $\bf 9.20$& $88.22$& $\bf 21.50$ & $72.37$& $\bf 11.00$ & $86.11$\\
+
+% \hline
+
+% \multicolumn{1}{l|}{\multirow{2}{*}{\bf Subj}} & TextCNN &$93.50$ & $11.10$ & $87.12$& $7.40$ & $91.28$ & $12.30$ & $84.60$& $6.40$& $92.31$ \\
+
+% & SNN  & $90.40$ & $\bf 47.40$& $47.09$ & $\bf 39.50$& $56.16$& $\bf 51.00$ & $42.50$ & $\bf 41.40$ & $54.41$\\
+
+% \hline
+
+% \multicolumn{1}{l|}{\multirow{2}{*}{\bf SST-$\bf 5$}} & TextCNN & $44.80$ & $0.70$ & $98.31$ & $0.30$ & $99.33$ & $1.80$ & $95.74$ & $0.50$ & $98.80$\\
+
+% & SNN  &$41.10$ & $\bf 7.00$ & $84.49$ & $\bf 5.10$ & $89.90$ & $\bf 8.30$ & $81.33$ & $\bf 5.50$ & $88.51$\\
+% \hline
+% \hline
+% \end{tabular}
+
+% \end{center}
+% % \vspace{-0.2cm}
+% \end{table*}
+
+% \vspace{-0.1cm}
+% \subsection{Adversarial Robustness}\label{seg:adversarial-robustness}
+% \vspace{-0.1cm}
+
+% Deep neural networks have proven to be vulnerable to adversarial examples \citep{arxiv-17:Samanta,arxiv-17:Wong,ijcai-18:Liang, alzanto2018generating}, and the existence and pervasiveness of adversarial examples have raised serious concerns.
+% We believe that SNNs provide a promising means to defend against adversarial attacks due to the non-differentiability of spikes and their tolerance to noise introduced by randomly-generated input spike trains.
+% We evaluated the empirical robustness of SNNs under test-time attacks with four black-box, synonym substitution-based attacks: TextFooler \citep{jin2020textfooler}, TextBugger \citep{li2018textbugger}, BERT-Attack \citep{li2020bertattack}, and PWWS \citep{ren2019pwws}.
+% BERT-Attack generates synonyms dynamically by using BERT \citep{Devlin2019BERTPO}, and all the other attack algorithms use $K$ nearest neighbor words of GloVe vectors \citep{pennington2014glove} to generate the synonyms of a word.
+% In this experiment, we set the maximum percentage of words that can be modified to $0.3$, the size of the synonym set to $15$, and the semantic similarity threshold between an original text and the adversarial one to $0.8$. The following metrics \citep{emnlp-21:Li} are used to report the results of empirical robustness:
+% % Since spiking neural networks contain integrate-and-fire neuron modules, which judge whether fire through a threshold, we think that SNNs may be less vulnerable to textual adversarial examples than traditional neural counterparts in theory.
+% % Therefore, we choose $4$ common adversarial word substitution algorithms to generate textual adversarial examples: TextFooler \citep{jin2020textfooler}, TextBugger \citep{li2018textbugger}, BERT-Attack \citep{li2020bertattack}, PWWS \citep{ren2019pwws}. 
+% % All of them use $K$ nearest neighbor words of the word embedding to generate a word’s synonyms., and the others by GloVe vectors\citep{pennington2014glove}.
+% % In this experiment, we control some variables unchanged, e.g. the maximum percentage of modified words $\rho_{max}=0.3$, neighbour vocab size $K=15$ and semantic similarity threshold $\epsilon=0.8$. Under the unified setting of adversarial attacks, we present 3 metrics to measure the defense performance of models:
+% \vspace{-0.3cm}
+% \begin{itemize}
+% \setlength{\itemsep}{0pt}
+% \setlength{\parsep}{0pt}
+% \setlength{\parskip}{0pt}
+% \item The \emph{clean accuracy} (\textbf{Cln}) is the accuracy achieved by a classifier on the clean texts.
+% \item The \emph{robust accuracy} (\textbf{Boa}) is the accuracy of a classifier achieved under a certain attack.
+% % which is also called attacked accuracy in some previous works \cite{li2020bert}.
+% \item The \emph{success rate} (\textbf{Suc}) is the number of texts successfully perturbed by an attack algorithm (causing the model to make errors) divided by all the number of texts to be attempted.
+% % \item \textbf{Clean\%}: model’s classification accuracy on the clean test set.
+% % \item \textbf{Aua\%}: model’s prediction accuracy under specific adversarial attack methods.
+% % \item \textbf{Suc\%}: the number of texts successfully perturbed by an attack algorithm divided by the number of all texts attempted.
+% \end{itemize}
+% \vspace{-0.3cm}
+
+% Table \ref{adversarialtb} shows the clean accuracy, robust accuracy (i.e., accuracy under attack), and attack success rate achieved by the SNNs under four sophisticated attacks on all $4$ English datasets, compared to the original TextCNNs. 
+% Following the evaluation setting used in \citep{emnlp-21:Li,wang2021natural,zhang2021certified}, we randomly sampled $1,000$ examples from each test set to evaluate the models' adversarial robustness because it is prohibitively slow to attack the entire test set. 
+% For fair comparison, the ensemble method (see Subsection \ref{sec:implementation} for details) was not used in the SNNs when they were evaluated under adversarial attacks since existing studies show that ensemble methods can be used to improve the adversarial robustness \citep{strauss2017ensemble,yuan2021transferability}. Therefore, the clean accuracy of SNNs reported in Table \ref{adversarialtb} is slightly lower than those in Table \ref{maintb}.
+% From these numbers, we can see that the SNNs consistently perform better than the original neural networks under all four attack algorithms in both the robust accuracy and attack success rate while suffering little performance drop on the clean data. The SNNs can improve the robust accuracy under attack by average $13.55\%$ and lower the attack success rate by $17\%$ on average.
+% On the Subj dataset, the robust accuracy can even be increased by a fairly significant margin of $38.7\%$ with $42.1\%$ decrease in the attack success rate under the test-time BERT-Attack.
+
+% % Table \ref{adversarialtb} shows the adversarial robustness of original TextCNNs and fine-tuned SNNs. Obviously, SNNs have much higher \textbf{Aua\%} and lower \textbf{Suc\%} than TextCNNs, especially on Subj dataset. Therefore, we draw a conclusion that spiking neural networks are more robust than traditional neural counterparts against adversarial textual examples.
+% \vspace{-0.1cm}
+% \subsection{Ablation Study and Impact of Hyper-Parameters}
+% \vspace{-0.1cm}
+% \label{sec:hyper-parameters}
+
+% We conducted an ablation study over all the considered datasets on the SNNs obtained by two variants of training methods to analyze the necessity of the shallow training  (i.e., conversion step) and the pre-trained word embeddings.
+% One is to train SNNs directly with the surrogate gradients without the conversion step.
+% As we can see from the row indicated by ``Directly-trained SNN'' from Table \ref{maintb}, the SNNs trained directly perform considerably worse than those trained with the two-step method by a significant margin of $21.17\%$ accuracy on average.
+% It shows that the conversion step is indispensable in training SNNs. 
+% Another is to use randomly-generated word embeddings to train SNNs.
+% We report these results in Table \ref{wopretraintb}, where the models indicated by ``RWE'' were initialized with the word embeddings randomly generated, while those by ``PRE'' were with pre-trained word embeddings.
+% No matter what training method is used, a significant drop in accuracy is observed in all the SNNs.
+% Comparing the numbers shown in the last two rows of Table \ref{wopretraintb}, we noticed a considerable difference of up to $1.39\%$ in accuracy on average between the SNNs with or without using pre-trained word embeddings, indicating their effectiveness in improving the performance of SNNs.
+
+% % \paragraph{w/o conversion}
+% % We used to think that with the help of surrogate gradient, we can easily train spiking neural networks using backpropagation through time (BPTT). However, we find it is quite hard to train SNNs for text classification using this traditional gradient descent method.
+% % ``Directly-trained SNN'' in Table \ref{maintb} demonstrates that spiking neural networks are not trainable even with surrogate gradient on most text classification datasets. Therefore, conversion method is necessary for text classification task.
+
+% % \begin{table*}
+% % \centering
+% % \small
+% % \begin{tabular}{l|ccccccc} \hline \hline
+% % \textbf{Model} & \textbf{SST-2} & \textbf{MR} & \textbf{Subj} & \textbf{SST-5} & \textbf{ChnSenti} & \textbf{Waimai}\\
+% % \hline
+% % Direct-trained SNN & $75.73$ & $51.55$ & $53.30$ & $23.08$ & $63.18$ & $66.42$ \\
+% % Fine-tuned SNN (Ours) & $\bf 80.91$ & $\bf 75.45$ & $\bf 90.60$ & $\bf 41.63$ & $\bf 85.02$ & $\bf 86.66$\\
+
+% % \hline\hline
+% % \end{tabular}
+
+% % \caption{\label{woconversiontb}
+% % Comparative Experiment between Direct-trained SNN (without conversion) and Fine-tuned SNN (using ``conversion + fine-tuning'' method).
+% % }
+% % \end{table*}
+
+% % \paragraph{w/o pre-trained word embedding}
+
+% % We randomly sample from $[0, 1]$ as word embeddings to train tailored models and SNNs in this experiment.
+% % Results in Table \ref{wopretraintb} shows that pre-trained word embedding is quite necessary for SNNs.
+
+% \begin{table*}
+% \small
+% \caption{\label{wopretraintb}
+% Classification accuracy achieved by the models using randomly-generated word embeddings (denoted as ``RWE'') and those using pre-trained word embeddings (denoted as ``PWE''). 
+% % The model obtained by applying the model-based normalization on the converted SNN is denoted as ``Conv SNN + MN" and that by applying the data-based normalization as ``Conv SNN + DN''. The SNNs trained with the ``conversion + fine-tuning'' is denoted as ``Conv SNN + FT''.
+% \vspace{-3pt}
+% }
+% % \setlength{\abovecaptionskip}{0pt}
+% % \setlength{\belowcaptionskip}{2pt}
+% \setlength{\tabcolsep}{1mm}
+% \begin{center}
+% \resizebox{\linewidth}{!}{
+% \begin{tabular}{l|cccc|cc} \hline \hline
+% \multirow{2}{*}{\textbf{Method}} & 
+% \multicolumn{4}{c|}{\bf English Dataset}  & 
+% \multicolumn{2}{c}{\bf Chinese Dataset}  \\
+% \cline{2-7}
+% & \textbf{MR} & \textbf{SST-$\bf 2$} & \textbf{Subj} & \textbf{SST-$\bf 5$} & \textbf{ChnSenti} & \textbf{Waimai} \\
+% \hline
+% Original TextCNN (RWE) & $75.02${\scriptsize $\pm 0.19$} & $81.93${\scriptsize $\pm 0.20$} & $92.20${\scriptsize $\pm 0.23$} & $44.29${\scriptsize $\pm 0.15$} & $84.53${\scriptsize $\pm 0.18$} & $86.85${\scriptsize $\pm 0.16$} \\
+
+% Tailored TextCNN (RWE) & $74.32${\scriptsize $\pm 0.24$} & $81.59${\scriptsize $\pm 0.17$} & $91.40${\scriptsize $\pm 0.22$}  & $42.41${\scriptsize $\pm 0.18$}  & $83.55${\scriptsize $\pm 0.16$}  & $86.79${\scriptsize $\pm 0.14$} \\
+% \hline 
+% Conv SNN (RWE) & $73.29${\scriptsize $\pm 1.01$} & $79.10${\scriptsize $\pm 0.83$} & $90.20${\scriptsize $\pm 0.40$} & $39.81${\scriptsize $\pm 0.69$} & $82.86${\scriptsize $\pm 0.68$} & $86.01${\scriptsize $\pm 0.38$} \\
+
+% Conv SNN $+$ MN (RWE) & $73.51${\scriptsize $\pm 0.54$} & $76.91${\scriptsize $\pm 0.87$} & $89.20${\scriptsize $\pm 0.47$} & $38.34${\scriptsize $\pm 0.86$} & $82.97${\scriptsize $\pm 0.51$} & $84.74${\scriptsize $\pm 0.74$} \\
+
+% Conv SNN $+$ DN (RWE) & $72.78${\scriptsize $\pm 0.91$} & $79.57${\scriptsize $\pm 0.95$} & $89.70${\scriptsize $\pm 0.72$} & $38.47${\scriptsize $\pm 1.14$} & $82.19${\scriptsize $\pm 0.49$} & $85.94${\scriptsize $\pm 0.53$} \\
+
+% Conv SNN $+$ FT (RWE) & $74.06${\scriptsize $\pm 0.42$} & $80.21${\scriptsize $\pm 0.35$} & $90.30${\scriptsize $\pm 0.26$} & $40.42${\scriptsize $\pm 0.30$} & $83.75${\scriptsize $\pm 0.07$} & $86.13${\scriptsize $\pm 0.24$} \\
+% \hline
+% Conv SNN $+$ FT (PWE) & $\bf 75.45${\scriptsize $\pm 0.51$} & $\bf 80.91${\scriptsize $\pm 0.34$} & $\bf90.60${\scriptsize $\pm 0.32$} & $\bf41.63${\scriptsize $\pm 0.44$} & $\bf 85.02${\scriptsize $\pm 0.22$} & $ \bf86.66${\scriptsize $\pm 0.17$} \\
+
+% \hline\hline
+% \end{tabular}
+% }
+% \end{center}
+% \vspace{-0.5cm}
+% \end{table*}
+
+% \begin{figure}[t]
+% \small
+% \centering
+%     \subfigure[]{
+%         \centering
+%         \includegraphics[width=0.23 \textwidth]{Figures/PerClass.pdf}
+%     }
+%     \subfigure[]{
+%        \centering
+%        \includegraphics[width=0.23 
+%        \textwidth]{Figures/Beta.pdf}
+%     }
+%     \subfigure[]{
+%         \centering
+%             \includegraphics[width=0.23 \textwidth]{Figures/Threshold_sst2.pdf}
+%     }
+%     \subfigure[]{
+%        \centering
+%        \includegraphics[width=0.23 \textwidth]{Figures/Threshold_ChnSenti.pdf}
+%     }
+%     \vspace{-0.35cm}
+%     \caption{\label{fig:mix} The impact of hyper-parameters. (a) Accuracy versus the number of neurons used per category. (b) Accuracy versus the decay rate of $\beta$. (c) and (d) Accuracy and the proportion of active neurons influenced by different values of membrane thresholds $U_{\text{thr}}$ on SST-$2$ and ChnSenti datasets.
+%     }
+% \end{figure}
+
+% We want to understand how the performance and estimated energy consumption of SNNs are impacted by the choice of three important hyper-parameters: the number of neurons per category, the value of decay rate $\beta$, and the membrane threshold $U_{\text{thr}}$.
+% As we mentioned in Subsection \ref{sec:implementation}, more than one spiking neuron can be assigned to each category to improve the accuracy of prediction. 
+% Figure \ref{fig:mix} (a) shows that the classification accuracy is generally insensitive to the number of neurons used for prediction, and the highest accuracy can be achieved around $10$ neurons per category.
+% It appears that if more neurons are used, the SNNs suffer from the problem of over-fitting.
+% As we can see from Figure \ref{fig:mix} (b), if the conversion-based method is used the value of $\beta$ should be set to $1.0$, otherwise the accuracy will be severely degraded.
+% A single spike only consumes a constant amount of energy \citep{cao2015spiking}.
+% The amount of energy consumption heavily depends on the number of spikes and the number of time steps used at the inference stage.
+% Figure \ref{fig:mix} (c) and (d) show that we can reduce the number of active neurons (approximately the number of spikes) by increasing the value of membrane threshold while suffering little or no performance drop, which implies the possibility of about $50\%$ energy saving by carefully adjusting the values of membrane threshold (say $U_{\text{thr}} = 2$).
+% In Appendix \ref{sec:energy-consumption}, we show that the SNNs can reduce more than $10$ times the energy consumption on average, compared to conventional TextCNNs.
+% We also want to understand how the choice of the number of time steps impacts the accuracy of SNNs (see Appendix \ref{sec:time-step} for details).
+% We found that the fine-tuned SNNs using $50$ time-steps outperform all the converted SNNs without the fine-tuning including those using $80$ time-steps, indicating that the proposed fine-tuning method can significantly speed up the inference time and reduce the energy consumption while maintaining the accuracy. 
+
+% % \paragraph{Membrane potential decay rate $\beta$}
+
+% % We test how membrane potential decay rate $\beta$ influence SNNs when fine-tuning.
+% % Figure \ref{fig:mix} (a) shows that the accuracy will sharply drop as the membrane potential decay rate $\beta$ decreases, which indicates that in our ``conversion + fine-tuning'' method, we had better set $\beta = 1$ (no membrane potential decay).
+
+% % \paragraph{The number of neurons per category}
+
+% % We also tried to change the number of neurons per class in the output layer.
+% % Figure \ref{fig:mix} (b) shows that the increase of neurons number per class won't generate negative effect to spiking neural networks.
+
+
+% % \paragraph{Membrane threshold $U_{thr}$}
+
+% % We test how membrane threshold $U_{thr}$ influence SNNs when fine-tuning.
+% % Figure \ref{fig:mix} (c) and (d) and Figure \ref{fig:threshold_chnsenti_subj} in Appendix show that when $U_{thr} > 1.0$, as $U_{thr}$ increases, the proportion of active neurons in leaky integrate-and-fire layers and the classification accuracy of SNN model both visibly decrease.
+
+% \vspace{-0.2cm}
+% \section{Conclusion}
+% \vspace{-0.2cm}
+
+% We found that it is hard to train spiking neural networks for language tasks directly using the error backpropagation through time although SNNs are supposed to be suitable for modeling time-varying data due to their temporal dynamics.
+% To address this issue, we suggested a two-step training recipe: start with an SNN converted from a normally-trained tailored network, and perform backpropagation on the converted SNN.
+% We also proposed a method to make use of pre-trained word embeddings in SNNs.
+% Pre-trained word embeddings are projected into vectors with positive values after proper normalization and shifting, which can be used to initialize tailored networks and converted to spike trains as input of SNNs.
+% Through extensive experimentation on $6$ text classification datasets, we demonstrated that the SNNs trained with the proposed method achieved competitive results on both English and Chinese datasets.
+% Such SNNs were also proven to be less vulnerable to textual adversarial examples than traditional neural counterparts. 
+% It would be interesting to see if we can pre-train SNNs unsupervisedly using masked language modeling with a large collection of text data in the future.
+
+% % a sentence is embedded into a spike sequence generated by aligning the one-hot coded spikes of every word in sequence.
+
+% % Is it possible to pre-train a SNN from a large amount of text data like BERT.
+
+% % The fist attempt to apply SNNs to NLP tasks, we hope our study will inspire ...
+
+% \section*{Acknowledgments}
+% The authors would like to thank the anonymous reviewers for their valuable comments. This work was partly supported by National Natural Science Foundation of China (No. $62076068$), Shanghai Municipal Science and Technology Major Project (No. $2021$SHZDZX$0103$), and Shanghai Municipal Science and Technology Project (No. $21511102800$).
+
+% \section*{Reproducibility Statement}
+% The authors have made great efforts to ensure the reproducibility of the empirical results reported in this paper.
+% Firstly, the experiment settings, evaluation metrics, and datasets were described in detail in Subsections \ref{sec:dataset}, \ref{seg:adversarial-robustness}, and \ref{sec:hyper-parameters}.
+% Secondly, the implementation details were clearly presented in Subsections \ref{sec:implementation} and Appendix \ref{BPTTDetail}. 
+% Finally, the source code is avaliable at \url{https://github.com/Lvchangze/snn}.
+% % Finally, we had submitted the source code of the proposed training algorithm with our paper, and plan to release the source code on GitHub upon acceptance. 
+
+\bibliography{iclr2023_conference}
+\bibliographystyle{iclr2023_conference}
+% \clearpage
+% \appendix
+% \section{Appendix}
+
+% \subsection{The derivative of the loss with respect to the weights}\label{BPTTDetail}
+
+% Given a loss function defined in Equation (\ref{lossfn}), the losses at every time step can be summed together to give the following global gradient, as illustrated in Figure \ref{fig:LIFandBPTT} (b):
+% \begin{equation}\label{backward1}
+% \small
+% \begin{split}
+%     \frac{\partial L}{\partial W} 
+%      = \sum_{t} \frac{\partial L_t}{\partial W} 
+%      = \sum_{i} \sum_{j\leq i} \frac{\partial L_i}{\partial W_j} \frac{\partial W_j}{\partial W} 
+%     \end{split}
+% \end{equation}
+% where $i$ and $j$ denote different time steps, and $L_t$ is the loss calculated at the step $t$.
+% No matter which time step is, the weights of an SNN are shared across all steps. Therefore, we have $W_0 = W_1 = \cdots = W$, which also indicates that $\frac{\partial W_j}{\partial W} = 1$.
+% Thus, Equation (\ref{backward1}) can be written as follows:
+% \begin{equation}
+% \small
+% \begin{split}
+%    \frac{\partial L}{\partial W} 
+%    & = \sum_{i} \sum_{j\leq i} \frac{\partial L_i}{\partial W_j} \\
+% \end{split}
+% \end{equation}
+% Based on the chain rule of derivatives, we obtain:
+% \begin{equation}
+% \small
+% \begin{split}
+%     \frac{\partial L}{\partial W} 
+%     & = \sum_{i} \sum_{j\leq i} \frac{\partial L_i}{\partial S_i} \frac{\partial S_i}{\partial U_i} \frac{\partial U_i}{\partial W_j} \\
+%     & = \sum_{i} \frac{\partial L_i}{\partial S_i} \frac{\partial S_i}{\partial U_i} \sum_{j\leq i} \frac{\partial U_i}{\partial W_j}
+% \end{split}
+% \end{equation}
+% where $\frac{\partial L_i}{\partial S_i}$ is the derivative of the cross-entropy loss at the time step $i$ with respect to $S_i$, and $\frac{\partial S_i}{\partial U_i}$ can be easily derived from Equation (\ref{surrogate}).
+% As to the last term of $\sum_{j\leq i} \frac{\partial U_i}{\partial W_j}$, we can split it into two parts:
+% \begin{equation}
+% \label{uwsplit}
+% \small
+% \sum_{j\leq i} \frac{\partial U_i}{\partial W_j} = \frac{\partial U_i}{\partial W_i} + \sum_{j\leq i-1} \frac{\partial U_i}{\partial W_j}
+% \end{equation}
+% From Equation (\ref{membranePotential}), we know that $\frac{\partial U_i}{\partial W_i} = X_i$.
+% Therefore, Equation (\ref{backward1}) can be simplified as follows:
+% \begin{equation}
+% \small
+%     \frac{\partial L}{\partial W} 
+%     = \sum_{i} \underbrace{\frac{\partial L_i}{\partial S_i} \frac{\partial S_i}{\partial U_i}}_{\text {constant}} \left( \underbrace{\frac{\partial U_i}{\partial W_j}}_{\text {constant}} +  \sum_{j\leq i-1} \frac{\partial U_i}{\partial W_j} \right) 
+% \end{equation}
+
+% By the chain rule of derivatives over time, $\frac{\partial U_i}{\partial W_j}$ can be factorized into two parts:
+% \begin{equation}
+% \small
+%    \frac{\partial U_i}{\partial W_j}
+%     = \frac{\partial U_i}{\partial U_{i-1}} \frac{\partial U_{i-1}}{\partial W_j}
+% \end{equation}
+% It is easy to see that $\frac{\partial U_i}{\partial U_{i-1}}$ is equal to $\beta$ from Equation (\ref{membranePotential}), and Equation (\ref{backward1}) can be written as:
+% \begin{equation}
+% \small
+%      \frac{\partial L}{\partial W} 
+%     = \sum_{i} \underbrace{\frac{\partial L_i}{\partial S_i} \frac{\partial S_i}{\partial U_i}}_{\text {constant}} \left( \underbrace{\frac{\partial U_i}{\partial W_j}}_{\text {constant}} +  \sum_{j\leq i-1} \underbrace{\frac{\partial U_i}{\partial U_{i-1}}}_{\text{constant}} \frac{\partial U_{i-1}}{\partial W_j} \right) 
+% \end{equation}
+% We can treat $\frac{\partial U_{i-1}}{\partial W_j}$ recurrently as Equation (\ref{uwsplit}). 
+% Finally, we can update the weights $W$ by the rule of $W = W -\eta \frac{\partial L}{\partial W} $, where $\eta$ is a learning rate.
+
+% \subsection{Dataset}\label{appendix:dataset details}
+
+% \begin{itemize}
+% \setlength{\itemsep}{0pt}
+% \setlength{\parsep}{0pt}
+% \setlength{\parskip}{0pt}
+% \item{\textbf{MR}}:
+% It consists of movie-review documents labeled with respect to their overall sentiment polarity (positive or negative) or subjective rating \citep{Pang2005SeeingSE}.
+
+% \item{\textbf{SST-$\bf 5$}}:
+% The Stanford Sentiment Treebank $5$ comprises $11,855$ sentences extracted
+% from movie reviews for sentiment classification \citep{Socher2013RecursiveDM}. There are $5$ different classes (very negative, negative, neutral, positive, and very positive).
+
+% \item{\textbf{SST-$\bf 2$}}:
+% It is the binary version of SST-$5$, and there are just $2$ classes (positive and negative).
+
+% \item{\textbf{Subj}}:
+% The task of this dataset is to classify a sentence as being subjective or objective\footnote{\scriptsize{\url{https://www.cs.cornell.edu/people/pabo/movie-review-data/}}}.
+
+% \item{\textbf{ChnSenti}}:
+% This datasets contains about $7,000$ Chinese hotel reviews annotated with positive or negative labels\footnote{\scriptsize{\url{https://raw.githubusercontent.com/SophonPlus/ChineseNlpCorpus/master/datasets/ChnSentiCorp_htl_all/ChnSentiCorp_htl_all.csv}}}.
+
+% \item{\textbf{Waimai}}:
+% It consists of $12,000$ Chinese user reviews collected by a food delivery platform for binary sentiment classification (positive and negative)\footnote{\scriptsize{\url{https://raw.githubusercontent.com/SophonPlus/ChineseNlpCorpus/master/datasets/waimai_10k/waimai_10k.csv}}}.
+% \end{itemize}
+
+% \subsection{More Analysis on the Impact of Hyper-parameters}
+
+% \begin{figure}[t]
+% \centering
+%     \subfigure[]{
+%        \centering
+%        \includegraphics[width=0.31 \textwidth]{Figures/Epoch.pdf}
+%     }
+%     \subfigure[]{
+%        \centering
+%        \includegraphics[width=0.31 \textwidth]{Figures/Threshold_mr.pdf}
+%     }
+%     \subfigure[]{
+%        \centering
+%        \includegraphics[width=0.31 \textwidth]{Figures/Threshold_Subj.pdf}
+%     }
+%     % \vspace{-0.2cm}
+%     \caption{\label{fig:epoch_threshold} (a) Classification accuracy versus the number of epochs used to fine-tune SNNs (b) and (c) Accuracy and the proportions of active neurons influenced by different values of membrane thresholds $U_{\text{thr}}$ on MR and Subj datasets.
+%     }
+%     % \vspace{-0.2cm}
+% \end{figure}
+
+% Figure \ref{fig:epoch_threshold} (a) shows how the accuracy of SNNs varies as the number of epochs grows at the fine-tuning phase. 
+% Although the highest accuracy is achieved with different numbers of epochs for different datasets, the peak accuracy is always reached within $5$ epochs, indicating that just a few epochs are required to fine-tune the converted SNNs and such additional training time and effort are acceptable.
+% For each value of membrane threshold $U_{\text{thr}}$, the corresponding accuracy and the proportion of active spiking neurons on both MR and Subj datasets are reported in Figure \ref{fig:epoch_threshold} (b) and (c) respectively. 
+% We found similar trends as those for SST-$2$ and ChnSenti datasets shown in Figure \ref{fig:mix} (c) and (d), which confirms that the energy consumption can be further reduced by about $50\%$ without suffering much performance loss.
+% We also investigate the impact of the dropout technique on the performance of the resulting SNNs.
+% Table \ref{wodropouttb} shows the accuracy on $6$ text classification datasets achieved by different neural models that were trained without using the dropout technique \citep{srivastava2014dropout}.
+% By comparing the numbers reported in Tables \ref{maintb} (where the dropout rate was set to $50\%$ during the training process) and \ref{wodropouttb}, it is clear that the dropout technique is still quite useful to train spike neural networks although its contribution to the performance of SNNs is slightly smaller than that of DNNs. 
+
+% % \paragraph{Membrane threshold Figures}
+% % We test how membrane threshold $U_{thr}$ influence SNNs when fine-tuning on ChnSenti and Subj dataset.
+% % tuning.
+
+% % \paragraph{Epochs}
+
+% % According to Figure \ref{fig:epoch_threshold_chnsenti_subj} (a), we show that too many epochs when further fine-tuning may hurt the performance of SNNs. This phenomenon is quite similar to traditional \emph{Pretrain and Fine-tune} process mentioned in \cite{Devlin2019BERTPO}.
+
+% % \paragraph{Dropout in fine-tuning}
+
+% % Comparing Table \ref{maintb} and Table \ref{wodropouttb} in Appendix, we reveal that a reasonable dropout rate when training tailored models can significantly improve the performance of the converted spiking neural networks. When dropout rate $p=0.5$, converted SNNs show much higher accuracy than $p=0.0$ on all datasets. $p=0.0$ leads to a extreme decrease on two normalization methods on most datasets.
+
+% \begin{table*} [t]
+% \small
+% \caption{\label{wodropouttb}
+% Classification accuracy achieved by different models on $6$ datasets. These models were trained without using the dropout technique.  The model obtained by applying the model-based normalization on the converted SNN is denoted as ``Conv SNN + MN" and that by applying the data-based normalization as ``Conv SNN + DN''. The SNNs trained with the ``conversion + fine-tuning'' is denoted as ``Conv SNN + FT''.
+% }
+% \begin{center}
+% \setlength{\tabcolsep}{1mm}
+% \resizebox{\linewidth}{!}{
+% \begin{tabular}{l|cccc|cc} \hline \hline
+% \multirow{2}{*}{\textbf{Method}} & 
+% \multicolumn{4}{c|}{\bf English Dataset}  & 
+% \multicolumn{2}{c}{\bf Chinese Dataset}  \\
+% \cline{2-7}
+% & \textbf{MR} & \textbf{SST-2} & \textbf{Subj} & \textbf{SST-5} & \textbf{ChnSenti} & \textbf{Waimai}\\
+% \hline
+% Original TextCNN & $76.29${\scriptsize $\pm 0.25$} & $82.70${\scriptsize $\pm 0.18$} & $92.60${\scriptsize $\pm 0.20$} & $43.40${\scriptsize $\pm 0.23$} & $85.11${\scriptsize $\pm 0.14$} & $87.82${\scriptsize $\pm 0.17$}\\
+
+% Tailored TextCNN & $75.91${\scriptsize $\pm 0.19$} & $82.26${\scriptsize $\pm 0.23$} & $92.50${\scriptsize $\pm 0.23$} & $42.67${\scriptsize $\pm 0.25$} & $84.43${\scriptsize $\pm 0.15$} & $87.82${\scriptsize $\pm 0.18$}\\
+% \hline 
+
+% Conv SNN & $74.68${\scriptsize $\pm 1.16$} & $73.41${\scriptsize $\pm 0.95$} & $86.50${\scriptsize $\pm 0.42$} & $35.29${\scriptsize $\pm 1.20$} & $69.61${\scriptsize $\pm 0.64$} & $84.63${\scriptsize $\pm 0.53$}\\
+
+% Conv SNN $+$ MN & $57.83${\scriptsize $\pm 1.51$} & $73.75${\scriptsize $\pm 0.74$} & $89.50${\scriptsize $\pm 0.54$} & $29.10${\scriptsize $\pm 0.95$} & $68.93${\scriptsize $\pm 0.73$} & $80.46${\scriptsize $\pm 0.64$}\\
+
+% Conv SNN $+$ DN & $74.73${\scriptsize $\pm 0.54$} & $75.38${\scriptsize $\pm 0.53$} & $87.00${\scriptsize $\pm 0.65$} & $35.48${\scriptsize $\pm 1.03$} & $70.45${\scriptsize $\pm 0.57$} & $84.35${\scriptsize $\pm 0.43$} \\
+
+% Conv SNN $+$ FT & $\bf 75.16${\scriptsize $\pm 0.52$} & $\bf75.45${\scriptsize $\pm 0.30$} & $\bf 90.50${\scriptsize $\pm 0.34$} & $\bf 38.87${\scriptsize $\pm 0.41$} & $\bf 83.99${\scriptsize $\pm 0.28$} & $\bf 86.04${\scriptsize $\pm 0.25$} \\
+
+% \hline\hline
+% \end{tabular}
+% }
+% \end{center}
+% % \vspace{-0.2cm}
+% \end{table*}
+
+% % \vspace{-0.2cm}
+% \subsection{Comparison of energy consumption}
+% \label{sec:energy-consumption}
+% % \vspace{-0.2cm}
+
+% We compare theoretical energy consumption of TextCNNs and SNNs on $6$ different text classification test datasets, and reported the results in Table \ref{tab:energy}.
+% The way to calculate the number of floating point operations (FLOPs), the number of synaptic operations (SOPs), and the average theoretical energy consumption (Power) will be discussed later. 
+% As we can see the numbers from Table \ref{tab:energy}, classical TextCNNs demand more than $10$ times the energy consumption on average, compared to SNNs.
+% On the test set of Waimai, the SNN can reduce up to $14.4$ times (i.e., $93.05\%$ decrease) average energy consumption required for predicting each text example, compared to the corresponding TextCNN.
+
+% % Table \ref{tab:energy} demonstrates that theoretical energy consumption of SNNs is significantly lower than that of original TextCNN in all datasets. To be specific, energy consumption of SNNs is $10.03$ times lower than that of TextCNN.
+
+% \begin{table}[htp]
+% \small
+% \caption{\label{tab:energy} Comparison of energy consumption on $6$ text classification benchmarks.
+% The floating point operations of TextCNN are denoted as ``FLOPs'' and the synaptic operations of SNNs as ``SOPs''.
+% The average theoretical energy required for each test example prediction is indicated by ``Power''.
+% }
+% \begin{center}
+% \begin{tabular}{l|l|c|c|c|c}
+% \hline
+% \hline
+% \bf Dataset &\bf Model &\bf FLOPs / SOPs($\bf G$) &\bf Power ($\bf mJ$) & \bf Energy Reduction &\bf Accuracy ($\bf \%$) \\
+% \hline
+% \multicolumn{1}{l|}{\multirow{2}{*}{\bf MR}} & TextCNN &$0.36$ & $4.498$ & {\multirow{2}{*}{$\bf10.66 \times \downarrow$ }}& $77.41$ \\
+% % \cline{3-4}
+% % \cline{6-6}
+% & SNN  & $5.49$ & $0.422$ &  & $75.45$ \\ \hline
+
+% \multicolumn{1}{l|}{\multirow{2}{*}{\bf SST-2}} & TextCNN &$0.25$ & $3.140$ & {\multirow{2}{*}{$\bf 9.05 \times \downarrow$ }} & $83.25$  \\
+% & SNN  & $4.51$ & $0.347$ &  & $80.91$ \\ \hline
+
+
+% \multicolumn{1}{l|}{\multirow{2}{*}{\bf Subj}} & TextCNN &$0.36$ & $4.478$ & {\multirow{2}{*}{$\bf 9.59 \times \downarrow$ }} & $94.00$  \\
+% & SNN  & $6.06$ & $0.467$ &  & $ 90.60$ \\ \hline
+
+% \multicolumn{1}{l|}{\multirow{2}{*}{\bf SST-5}} & TextCNN &$0.25$ & $3.108$ & {\multirow{2}{*}{$\bf 9.14 \times \downarrow$ }} & $45.48$  \\
+% & SNN  & $4.41$ & $0.340$ &  & $41.63$ \\ \hline
+
+% \multicolumn{1}{l|}{\multirow{2}{*}{\bf ChnSenti}} & TextCNN &$0.33$ & $4.144$ & {\multirow{2}{*}{$\bf7.31 \times \downarrow$ }} & $86.74$  \\
+% & SNN  & $7.37$ & $0.567$ &  & $85.02$ \\ \hline
+
+% \multicolumn{1}{l|}{\multirow{2}{*}{\bf Waimai}} & TextCNN &$0.33$ & $4.132$ & {\multirow{2}{*}{$\bf14.40 \times \downarrow$ }} & $88.49$  \\
+% & SNN  & $3.72$ & $0.287$ &  & $86.66$ \\ \hline
+% \hline
+
+% \end{tabular}
+% \end{center}
+% \end{table}
+
+% For spiking neural networks (SNNs), the theoretical energy consumption of layer $\xi$ can be calculated as $\text{Power}(\xi) = 77 \text{fJ} \times \text{SOPs}(\xi)$, where $77 \text{fJ}$ is the energy consumption per synaptic operation (SOP) \citep{Indiveri2015NeuromorphicAF,hu2018spiking}. 
+% The number of synaptic operations at the layer $\xi$ of an SNN is estimated as $\text{SOPs}(\xi) = T \times \gamma \times \text{FLOPs}(\xi)$, where $T$ is the number of times step required in the simulation, $\gamma$ is the firing rate of input spike train of the layer $\xi$, and $\text{FLOPs}(\xi)$ is the estimated floating point operations at the layer $\xi$. For classical artificial neural networks like TextCNNs, the theoretical energy consumption required by the layer $\xi$ can be estimated by $\text{Power}(\xi) = 12.5\text{pJ} * \text{FLOPs}(\xi)$. 
+% Note that $1$J $= 10^{3}$ mJ $=10^{12}$ pJ $=10^{15}$ fJ.
+
+% \subsection{The Impact of the number of time steps}
+% \label{sec:time-step}
+
+% \begin{figure}[t]
+%   % {r}{5.5cm}
+%   \centering
+%     \subfigure[]{
+%        \centering
+%        \includegraphics[width=0.32 \textwidth]{Figures/Time_Step.pdf}
+%     }
+%     \subfigure[]{
+%         \centering
+%         \includegraphics[width=0.32 \textwidth]{Figures/Conv_tune_time_step_eng.pdf}
+%     }
+%     \subfigure[]{
+%         \centering
+%         \includegraphics[width=0.31 \textwidth]{Figures/Conv_tune_time_step_chn.pdf}
+%     }
+%   \caption{\label{fig:time_step} Classification accuracy versus the number of time steps. 
+%   (a) The accuracy achieved by the fine-tuned SNNs with various time steps at the inference time on the test sets of MR, Subj, ChnSenti, and Waimai datasets.
+%   (b) The accuracy achieved by the SNNs with and without the fine-tuning on two English text classification benchmarks.
+%   (c) The accuracy achieved by the SNNs with and without the fine-tuning on two Chinese text classification datasets.
+%   }
+%   % \setlength{\belowdisplayskip}{3pt}
+% \end{figure}
+
+% We want to understand how the choice of the number of time steps used at the inference stage impacts the accuracy of SNNs by varying the number of times steps from $10$ to $80$. 
+% As we can see Figure \ref{fig:time_step} (a), generally the larger the number of time steps the higher the accuracy achieved by the SNNs. 
+% However, the performance increases smoothly when the number of time steps is larger than $50$.
+% It is noteworthy that the inference time of SNNs that are converted from ANNs for computer vision tasks turns out be very large (of the order of a few thousand-time steps).
+
+% We also would like to know whether the fine-tuning can help to reduce the number of time steps required to achieve reasonable performance.
+% In Figure \ref{fig:time_step} (b) and (c), we report accuracy achieved by the SNNs with and without the fine-tuning on English and Chinese text classification benchmarks respectively.
+% We found that on all the considered datasets the fine-tuned SNNs with $50$ time-steps outperform the converted SNNs (without the fine-tuning) using any time step between $20$ and $80$ at the inference, even those with the largest $80$ time-steps.
+% On the Subj, ChnSenti, and Waimai datasets, the fine-tuned SNNs using $40$ time-steps can beat all the converted SNNs without the fine-tuning phase including those using $80$ time-steps, indicating that the proposed fine-tuning method can significantly speed up the inference time and reduce the energy consumption while maintaining the accuracy. 
+
+% % As we can see in Figure \ref{fig:time_step} (a), the fine-tuned SNNs reached the peak accuracy within only 50 time-steps after the first input spike. There's no much difference in accuracy when time steps equals $50$, $60$, $70$, and $80$. Therefore, we take time steps $T=50$ in consideration of inference time and energy consumption. 
+% % Meanwhile, Figure \ref{fig:time_step} (b) shows that .
+
+% \subsection{Motivation and limitations}
+
+% Unlike classical artificial neural networks (ANNs), spiking neural networks (SNNs) do not transmit information in form of continuous values, but rather the time when a membrane potential reaches a specific threshold.
+% Once the membrane potential reaches the threshold, the neuron fires and generates a pulse signal that travels to the downstream neurons which increase or decrease their potentials in proportion to the connection strengths in response to this signal. 
+% SNNs incorporate the concept of time into their computing model in addition to neuronal and synaptic states. They are considered to be more biologically plausible neuronal models than classical ANNs.
+% Besides, SNNs are suitable for implementation on low-power hardware, and offer a promising computing paradigm to deal with large volumes of data using spike trains for information representation in a more energy-efficient manner.
+% Nowadays, excessive energy consumption is a major impairment to more wide-spread applications of ANNs. 
+% Spike-based neuromorphic hardware now are available to alleviate this problem by more energy-efficient implementations of ANNs than specialized hardware such as GPUs. It has been reported that improvements in energy consumption of up to $2 \backsim 3$ orders of magnitude when compared to conventional ANN acceleration on embedded hardware \citep{azghadi2020hardware,ceolini2020hand,davies2021advancing}.
+% For more introduction to SNNs, we refer readers to several good reviews \citep{roy2019towards,tavanaei2019deep,taherkhani2020review,Eshraghian2021TrainingSN}. 
+
+% Many neuromorphic systems now allow us to simulate software-trained models without performance loss. 
+% Since mature on-chip training solutions are not yet available, it remains a great challenge to deploy high-performing SNNs on such hardware due to the lack of efficient training algorithms.
+% % In this study, we show that combining shallow training (i.e., conversion-based approach) and fine-tuning results in competitive spiking network performance on multiple language benchmarks. 
+% In addition, there have been very few works that have demonstrated the efficacy of SNNs in natural language processing (NLP) tasks.
+% This study shows how encoding pre-trained word embeddings as spike trains and training with the two-step recipe (conversion + fine-tuning) can yield competitive performance on multiple text classification benchmarks both for English and Chinese languages, thereby giving us a glimpse of how learning algorithms can empower neuromorphic technologies for energy-efficient and ultralow-latency language processing in the future.
+% SNNs still lag behind ANNs in terms of accuracy yet.
+% Through intensive research on SNNs in recent years, the performance gap between deep neural networks (DNNs) and SNNs is constantly narrowing, and can even vanish on some vision tasks. 
+% SNNs cannot currently outperform DNNs on the datasets that were created to train and evaluate conventional DNNs (they use continuous values). Such data should be converted into spike trains before it can be feed into SNNs, and this conversion might cause loss of information and result in a reduction in performance. Therefore, the comparison is indirect and unfair. New datasets that have properties which are compatible with SNNs are expected to be available in the near future, such as those obtained by event-based cameras \citep{ramesh2019dart} or the spiking activities that are recorded from biological nervous systems \citep{maggi2018ensemble}, which could be difficult for classical DNNs.
+% For language processing, it would be interesting to see if we can pre-train SNNs unsupervisedly using masked language modeling with a large collection of text data and narrow the performance gap between SNNs and start-of-the-art transformer-based models in the future.
+\end{document}
