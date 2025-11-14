@@ -21,7 +21,9 @@ final/
 │   ├── run_all.py                   # Complete pipeline (train + predict)
 │   ├── example_usage.py             # Usage examples (DL models)
 │   ├── SVM_LR_NB.py                 # Stage 1: Traditional ML baselines
-│   └── [snn_conversion code]        # Stage 3: SNN conversion (pending)
+│   ├── snn_conversion.py            # Stage 3: ANN-to-SNN conversion
+│   ├── snn_models.py                # Stage 3: Spike models & surrogate gradients
+│   └── snn_train.py                 # Stage 3: SNN training & fine-tuning
 │
 ├── Configuration & Results/          # Dependencies and results
 │   ├── requirements.txt              # Python dependencies
@@ -99,6 +101,11 @@ Using learned 300-dimensional word embeddings:
 
 ### Stage 3: Energy-Efficient Spiking Neural Networks
 Converting trained DNNs to SNNs for neuromorphic hardware:
+
+**Key Files**:
+- `snn_conversion.py` - Weight mapping from ANN to SNN, Poisson spike encoding
+- `snn_models.py` - Spike neuron models (LIF), surrogate gradient definition, fine-tuning
+- `snn_train.py` - Training loop, hyperparameter tuning (T, U_thr), energy analysis
 
 **Conversion Pipeline**: Tailored TextCNN (ANN) → Spike encoding → SNN → Fine-tune with surrogate gradients
 **Results**: 87.6% accuracy with ~90% energy reduction (0.6% accuracy loss)

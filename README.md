@@ -42,7 +42,9 @@ final/
 │   ├── run_all.py                   # Complete DL pipeline
 │   ├── example_usage.py             # Usage examples (DL models)
 │   ├── SVM_LR_NB.py                 # Traditional ML baselines (TF-IDF)
-│   └── [SNN_conversion code]        # SNN conversion (code pending - see Note below)
+│   ├── snn_conversion.py            # SNN: ANN-to-SNN conversion
+│   ├── snn_models.py                # SNN: Spike models and surrogate gradients
+│   └── snn_train.py                 # SNN: Training and fine-tuning pipeline
 │
 ├── Configuration & Results/          # Dependencies and results
 │   ├── requirements.txt              # Python dependencies
@@ -231,10 +233,10 @@ For detailed information, see:
 | Component | Description | Status |
 |-----------|-------------|--------|
 | **Tailored TextCNN** | SNN-compatible CNN (ReLU, avg-pooling, bias-free) | ✅ Implemented & Trained (88.2% accuracy) |
-| **ANN-to-SNN Conversion** | Weight mapping + Poisson spike encoding | ✅ Conversion framework ready |
-| **Surrogate Gradient Fine-tuning** | Backprop through spikes using fast-sigmoid | ✅ Fine-tuning pipeline ready |
+| **ANN-to-SNN Conversion** | Weight mapping + Poisson spike encoding | ✅ `snn_conversion.py` implemented |
+| **Surrogate Gradient Fine-tuning** | Backprop through spikes using fast-sigmoid | ✅ `snn_models.py` implemented |
 | **Energy Analysis** | Time-step (T) & threshold (U_thr) tuning | ✅ Results: ~87.6% accuracy, ~90% energy savings |
-| **SNN Code** | Full SNN implementation & training scripts | ⏳ Code pending (see note below) |
+| **SNN Training Pipeline** | Full SNN training & inference scripts | ✅ `snn_train.py` implemented |
 
 ## 🔍 Model Interpretability
 
@@ -250,22 +252,32 @@ The Attention-BiLSTM model provides interpretability through:
 - **RAM**: Minimum 8GB, recommended 16GB+
 - **Storage**: ~4GB for model weights + data files
 
-## 📌 Important Note: SNN Implementation Status
+## ✅ Complete Implementation Status
 
-**Current Status**: The SNN conversion and fine-tuning experiments have been completed and reported in the final paper (`iclr2023_conference copy.tex`). However, the full SNN implementation code is currently pending and will be added to this repository.
+**All three stages are fully implemented with complete source code:**
 
-**What's Included:**
-- ✅ Complete DL models (CNN, BiLSTM, Attention-BiLSTM) with full source code
-- ✅ Complete traditional ML models (SVM, LR, NB) with full source code
-- ✅ Comprehensive results, logs, and documentation
-- ✅ SNN theoretical framework and conversion methodology in paper
+✅ **Stage 1: Traditional ML Models (Complete)**
+- `SVM_LR_NB.py` (251 lines) - Logistic Regression, Naive Bayes, SVM implementations
+- Full TF-IDF feature pipeline
+- GridSearchCV hyperparameter tuning
 
-**What's Pending:**
-- ⏳ SNN conversion implementation (Python code)
-- ⏳ Surrogate gradient fine-tuning scripts
-- ⏳ SNN inference and energy analysis code
+✅ **Stage 2: Deep Learning Models (Complete)**
+- `deep_learning_models.py` (420 lines) - CNN, BiLSTM, Attention-BiLSTM architectures
+- `train.py` (380 lines) - Complete training pipeline with validation
+- `predict.py` (220 lines) - Prediction generation for test set
+- Full word embedding and data preprocessing pipeline
 
-For SNN methodology details, please refer to **`Research & References/iclr2023_conference copy.tex`** (Section 3 & 4).
+✅ **Stage 3: Spiking Neural Networks (Complete)**
+- `snn_conversion.py` - ANN-to-SNN weight conversion and Poisson spike encoding
+- `snn_models.py` - Spike models with surrogate gradient backpropagation
+- `snn_train.py` - SNN training, fine-tuning, and energy analysis pipeline
+- Time-step and threshold parameter tuning
+- Energy efficiency evaluation
+
+**Key Resources:**
+- **Final Paper**: `Research & References/iclr2023_conference copy.tex` (Complete methodology & results)
+- **Training Logs**: `Logs/training.log` (Detailed training information)
+- **Results**: `Configuration & Results/training_results.json` + submission files
 
 ---
 
@@ -306,7 +318,9 @@ For SNN methodology details, please refer to **`Research & References/iclr2023_c
 - `SVM_LR_NB.py` (251 lines) - Logistic Regression, Naive Bayes, SVM with TF-IDF features
 
 **Stage 3: SNN Models (Ye Shuhan)**
-- `[SNN implementation code]` - ⏳ **Pending** - See note below
+- `snn_conversion.py` - ANN-to-SNN conversion with weight mapping
+- `snn_models.py` - Spike neuron models and surrogate gradients
+- `snn_train.py` - Training and fine-tuning pipeline with energy analysis
 
 ### Configuration
 - `requirements.txt` - All Python dependencies
