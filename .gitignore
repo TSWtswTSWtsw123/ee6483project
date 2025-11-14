@@ -1,6 +1,16 @@
 # Large model files (can be regenerated)
 *.pt
 
+# LaTeX source files (keep PDFs only)
+*.tex
+*.aux
+*.bbl
+*.blg
+*.brf
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+
 # Python
 __pycache__/
 *.pyc
