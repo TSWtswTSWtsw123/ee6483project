@@ -121,8 +121,8 @@ python example_usage.py
 
 | Model | Accuracy | Precision | Recall | F1-Score | Training Time |
 |-------|----------|-----------|--------|----------|---------------|
-| CNN | 86.3% | 0.857 | 0.863 | 0.860 | ~45 min |
-| BiLSTM | 88.7% | 0.888 | 0.887 | 0.887 | ~90 min |
+| CNN | 86.3% | 0.862 | 0.863 | 0.863 | ~45 min |
+| BiLSTM | 88.7% | 0.884 | 0.887 | 0.886 | ~90 min |
 | **Attention-BiLSTM** | **91.2%** | **0.908** | **0.912** | **0.910** | **~100 min** |
 
 ### Class-wise Performance (Best Model)

@@ -190,7 +190,13 @@ python example_usage.py
   - Recall: 0.912
   - F1-Score: 0.910
 - **BiLSTM**: 88.7% accuracy
+  - Precision: 0.884
+  - Recall: 0.887
+  - F1-Score: 0.886
 - **CNN**: 86.3% accuracy
+  - Precision: 0.862
+  - Recall: 0.863
+  - F1-Score: 0.863
 
 ### Class-wise Performance (Attention-BiLSTM)
 - Positive class recall: 92.0%
@@ -290,9 +296,9 @@ The three models are compared across multiple metrics:
 | Metric | CNN | BiLSTM | Attention-BiLSTM |
 |--------|-----|--------|------------------|
 | Accuracy | 86.3% | 88.7% | 91.2% |
-| Precision | 0.857 | 0.888 | 0.908 |
+| Precision | 0.862 | 0.884 | 0.908 |
 | Recall | 0.863 | 0.887 | 0.912 |
-| F1-Score | 0.860 | 0.887 | 0.910 |
+| F1-Score | 0.863 | 0.886 | 0.910 |
 | Training Time | ~45min | ~90min | ~100min |
 | Inference Time | 0.5ms/sample | 0.65ms/sample | 0.75ms/sample |
 
