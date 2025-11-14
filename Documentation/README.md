@@ -9,14 +9,13 @@ This project implements three neural network models for sentiment classification
 
 ```
 final/
-├── Source Code/                      # Python implementation files
-│   ├── deep_learning_models.py      # Deep learning implementations (CNN, BiLSTM, Attention-BiLSTM)
+├── Source Code/                      # Deep learning implementation files
+│   ├── deep_learning_models.py      # Model implementations (CNN, BiLSTM, Attention-BiLSTM)
 │   ├── data_utils.py                # Data loading and preprocessing utilities
-│   ├── train.py                     # Training script for deep learning models
+│   ├── train.py                     # Training pipeline
 │   ├── predict.py                   # Prediction script for generating submission
 │   ├── run_all.py                   # Complete pipeline (train + predict)
-│   ├── example_usage.py             # Usage examples for deep learning models
-│   └── SVM_LR_NB.py                 # Traditional ML baseline models (SVM, LR, NB)
+│   └── example_usage.py             # Usage examples
 │
 ├── Configuration & Results/          # Dependencies and results
 │   ├── requirements.txt              # Python dependencies
@@ -72,23 +71,15 @@ final/
 
 ## Model Overview
 
-This project implements **6 sentiment classification models** for comprehensive comparison:
+This project implements **3 deep learning neural network models** for sentiment classification:
 
-### Deep Learning Models (Advanced)
 1. **CNN** - Convolutional Neural Network (86.3% accuracy)
 2. **BiLSTM** - Bidirectional LSTM (88.7% accuracy)
 3. **Attention-BiLSTM** - BiLSTM with Attention (91.2% accuracy) ⭐ **Best Model**
 
-### Traditional Machine Learning Models (Baselines)
-4. **Support Vector Machine (SVM)** - Linear SVM with TF-IDF features
-5. **Logistic Regression** - Fast linear classifier with L2 regularization
-6. **Naive Bayes** - Probabilistic baseline for quick training
-
 ---
 
 ## Model Architectures
-
-### Deep Learning Models
 
 #### 1. CNN Classifier
 - **Embedding**: 300-dimensional word embeddings
@@ -111,35 +102,6 @@ This project implements **6 sentiment classification models** for comprehensive 
 - **Context Vector**: Weighted sum of LSTM outputs using attention weights
 - **Fully Connected**: 512 → 128 → 1 with ReLU, BatchNorm, and Dropout(0.5)
 - **Output**: Sigmoid activation for binary classification
-
-### Traditional Machine Learning Models
-
-#### 4. Support Vector Machine (SVM)
-- **Feature Engineering**: TF-IDF vectorization
-- **Kernel**: Linear SVM for text classification
-- **Hyperparameters**:
-  - `ngram_range`: (1, 2) for unigrams and bigrams
-  - `min_df`: 2 (minimum document frequency)
-  - `C`: [1.0, 2.0] (regularization parameter tuned via GridSearchCV)
-- **Advantage**: Fast inference, good for high-dimensional text data
-
-#### 5. Logistic Regression
-- **Feature Engineering**: TF-IDF vectorization
-- **Regularization**: L2 norm for class weight balancing
-- **Hyperparameters**:
-  - `ngram_range`: (1, 2)
-  - `min_df`: 2
-  - `C`: [1.0, 2.0] (inverse of regularization strength)
-- **Advantage**: Interpretable coefficients, fast training and prediction
-
-#### 6. Naive Bayes
-- **Feature Engineering**: Count vectorization + TF-IDF transformation
-- **Classifier**: MultinomialNB for text data
-- **Hyperparameters**:
-  - `ngram_range`: (1, 2)
-  - `min_df`: 2
-  - `alpha`: [0.5, 1.0] (smoothing parameter)
-- **Advantage**: Probabilistic framework, computationally efficient
 
 ---
 
@@ -231,20 +193,6 @@ python predict.py
 cd "Source Code"
 python example_usage.py
 ```
-
-### Option 5: Run Traditional ML Baseline Models
-```bash
-cd "Source Code"
-python SVM_LR_NB.py --train "../Data Files/train.json" --test "../Data Files/test.json" --output_dir "../results"
-```
-
-This will:
-1. Train SVM, Logistic Regression, and Naive Bayes models
-2. Perform hyperparameter tuning with GridSearchCV (5-fold cross-validation)
-3. Evaluate on validation set
-4. Generate predictions for test set
-5. Create submission files for each model
-6. Generate performance comparison visualizations
 
 ---
 
