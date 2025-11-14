@@ -333,9 +333,9 @@ For SNN methodology details, please refer to **`Research & References/iclr2023_c
 
 - **GitHub Repository**: https://github.com/TSWtswTSWtsw123/ee6483project
 - **Owner**: TSWtswTSWtsw123
-- **Email**: 1072202885@qq.com
 - **Branch**: main
-- **Total Commits**: 8+
+- **Total Commits**: 16
+- **Latest Commit**: `445cd3a` - Update README to reflect complete team project (ML, DL, SNN pipeline)
 - **Last Updated**: 2025-11-14
 
 ## 📖 References
