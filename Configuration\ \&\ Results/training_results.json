@@ -1,0 +1,20 @@
+{
+    "CNN": {
+        "val_accuracy": 0.863,
+        "val_precision": 0.862,
+        "val_recall": 0.863,
+        "val_f1": 0.863
+    },
+    "BiLSTM": {
+        "val_accuracy": 0.887,
+        "val_precision": 0.884,
+        "val_recall": 0.887,
+        "val_f1": 0.886
+    },
+    "Attention-BiLSTM": {
+        "val_accuracy": 0.912,
+        "val_precision": 0.908,
+        "val_recall": 0.912,
+        "val_f1": 0.910
+    }
+}
