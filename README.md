@@ -1,6 +1,6 @@
-# 📊 Sentiment Analysis - Deep Learning Models
+# 📊 From TextCNN to SNN: End-to-End Sentiment Analysis Pipeline
 
-> A comprehensive deep learning project implementing three neural network architectures for sentiment classification of product reviews. Achieves 91.2% accuracy with Attention-BiLSTM model.
+> A comprehensive sentiment classification pipeline bridging traditional machine learning, modern deep architectures, and energy-efficient spiking neural networks (SNNs). **Best DL accuracy: 91.2%** with Attention-BiLSTM | **SNN efficiency: ~90% energy reduction**
 
 [![GitHub](https://img.shields.io/badge/GitHub-ee6483project-blue?logo=github)](https://github.com/TSWtswTSWtsw123/ee6483project)
 [![Python](https://img.shields.io/badge/Python-3.8+-blue?logo=python)](https://www.python.org/)
@@ -9,28 +9,40 @@
 
 ## 🎯 Overview
 
-This project implements three deep learning neural network architectures for sentiment classification of product reviews:
+This project proposes an **end-to-end sentiment classification pipeline** that systematically bridges three approaches:
 
-- **CNN Classifier**: Multiple parallel convolutions with different filter sizes to capture n-gram features (86.3% accuracy)
+### Stage 1: Traditional ML Baselines (TF-IDF Features)
+- **Logistic Regression**: Fast linear baseline with L2 regularization
+- **Naive Bayes**: Probabilistic classifier for quick comparison
+- **Support Vector Machine (SVM)**: Linear SVM for high-dimensional text
+
+### Stage 2: Advanced Deep Learning Models (Learned Embeddings) ⭐
+- **CNN Classifier**: Multiple parallel convolutions capturing n-gram features (86.3% accuracy)
 - **BiLSTM Classifier**: Bidirectional LSTM processing sequences in both directions (88.7% accuracy)
-- **Attention-BiLSTM Classifier** ⭐: Enhanced BiLSTM with attention mechanism for interpretability **(91.2% accuracy)**
+- **Attention-BiLSTM Classifier**: Enhanced BiLSTM with attention mechanism for interpretability **(91.2% accuracy - BEST)**
+
+### Stage 3: Energy-Efficient Spiking Neural Networks (SNN)
+- **Tailored TextCNN → SNN Conversion**: ANN-to-SNN conversion with surrogate-gradient fine-tuning
+- **Energy Efficiency**: Estimated ~90% reduction in per-inference compute energy under neuromorphic assumptions
+- **Accuracy-Efficiency Tradeoff**: Controlled via time-steps (T) and membrane threshold (U_thr) tuning
 
 **Course**: IE6483 / EE6483 Mini Project - Artificial Intelligence and Data Mining
 **Institution**: Nanyang Technological University (NTU)
-**Responsibility**: Deep Learning Models (Sentiment Classification)
-**Submission File**: `submission_attention_bilstm.csv` (Attention-BiLSTM predictions)
+**Team**: Ye Shuhan (SNN), Tang Shuwei (Deep Learning), Ding Miao (Traditional ML & Domain Adaptation)
 
 ## 📁 Project Structure
 
 ```
 final/
-├── Source Code/                      # Deep learning implementation files
-│   ├── deep_learning_models.py      # Model implementations (CNN, BiLSTM, Attention-BiLSTM)
+├── Source Code/                      # Complete implementation (ML, DL, SNN)
+│   ├── deep_learning_models.py      # Deep learning: CNN, BiLSTM, Attention-BiLSTM
 │   ├── data_utils.py                # Data loading and preprocessing
-│   ├── train.py                     # Training pipeline
-│   ├── predict.py                   # Prediction generation
-│   ├── run_all.py                   # Complete pipeline
-│   └── example_usage.py             # Usage examples
+│   ├── train.py                     # Training pipeline (DL models)
+│   ├── predict.py                   # Prediction generation (DL models)
+│   ├── run_all.py                   # Complete DL pipeline
+│   ├── example_usage.py             # Usage examples (DL models)
+│   ├── SVM_LR_NB.py                 # Traditional ML baselines (TF-IDF)
+│   └── [SNN_conversion code]        # SNN conversion (code pending - see Note below)
 │
 ├── Configuration & Results/          # Dependencies and results
 │   ├── requirements.txt              # Python dependencies
@@ -192,26 +204,37 @@ For detailed information, see:
 - Weighted loss for class imbalance handling
 - Gradient clipping for stability
 
-## 🎓 Model Architecture Comparison
+## 🎓 Three-Stage Pipeline Overview
 
-### CNN
-- Parallel Conv1D layers (filters: 3, 4, 5)
-- Global max pooling
-- Fast training (~45 min)
-- Good for local feature extraction
+### Stage 1: Traditional ML Baselines (Ding Miao et al.)
+| Model | Features | Approach | Pros | Cons |
+|-------|----------|----------|------|------|
+| **Logistic Regression** | TF-IDF (1-2 gram) | Linear classifier + L2 reg | Fast, interpretable | Shallow feature extraction |
+| **Naive Bayes** | TF-IDF (1-2 gram) | Probabilistic | Simple, lightweight | Strong independence assumption |
+| **SVM** | TF-IDF (1-2 gram) | Linear SVM | Good for high-dim text | No built-in probability |
 
-### BiLSTM
-- Bidirectional LSTM (2 stacked layers)
-- Captures long-range dependencies
-- Medium training time (~90 min)
-- Better context understanding
+### Stage 2: Advanced Deep Learning (Tang Shuwei et al.)
+| Model | Input | Architecture | Accuracy | Training Time |
+|-------|-------|--------------|----------|---------------|
+| **CNN** | Word embeddings (300-dim) | 3 parallel Conv1D + Global Max Pool | 86.3% | ~45 min |
+| **BiLSTM** | Word embeddings (300-dim) | 2-layer BiLSTM + FC | 88.7% | ~90 min |
+| **Attention-BiLSTM** ⭐ | Word embeddings (300-dim) | 2-layer BiLSTM + Attention + FC | **91.2%** | ~100 min |
 
-### Attention-BiLSTM ⭐
-- BiLSTM + Attention mechanism
-- Interpretable predictions
-- Longest training time (~100 min)
-- Best performance (91.2%)
-- Attention weights show influential words
+**Key Features:**
+- Learned 300-dimensional word embeddings
+- Weighted Binary Cross-Entropy loss (handles class imbalance 6:1)
+- Adam optimizer with learning rate scheduling
+- Early stopping (patience=5) and gradient clipping
+- Regularization: Dropout (0.5), Batch Normalization, Gradient clipping
+
+### Stage 3: Energy-Efficient SNNs (Ye Shuhan et al.)
+| Component | Description | Status |
+|-----------|-------------|--------|
+| **Tailored TextCNN** | SNN-compatible CNN (ReLU, avg-pooling, bias-free) | ✅ Implemented & Trained (88.2% accuracy) |
+| **ANN-to-SNN Conversion** | Weight mapping + Poisson spike encoding | ✅ Conversion framework ready |
+| **Surrogate Gradient Fine-tuning** | Backprop through spikes using fast-sigmoid | ✅ Fine-tuning pipeline ready |
+| **Energy Analysis** | Time-step (T) & threshold (U_thr) tuning | ✅ Results: ~87.6% accuracy, ~90% energy savings |
+| **SNN Code** | Full SNN implementation & training scripts | ⏳ Code pending (see note below) |
 
 ## 🔍 Model Interpretability
 
@@ -226,6 +249,25 @@ The Attention-BiLSTM model provides interpretability through:
 - **GPU**: NVIDIA GTX 1080+ recommended (tested on RTX 2080 Ti)
 - **RAM**: Minimum 8GB, recommended 16GB+
 - **Storage**: ~4GB for model weights + data files
+
+## 📌 Important Note: SNN Implementation Status
+
+**Current Status**: The SNN conversion and fine-tuning experiments have been completed and reported in the final paper (`iclr2023_conference copy.tex`). However, the full SNN implementation code is currently pending and will be added to this repository.
+
+**What's Included:**
+- ✅ Complete DL models (CNN, BiLSTM, Attention-BiLSTM) with full source code
+- ✅ Complete traditional ML models (SVM, LR, NB) with full source code
+- ✅ Comprehensive results, logs, and documentation
+- ✅ SNN theoretical framework and conversion methodology in paper
+
+**What's Pending:**
+- ⏳ SNN conversion implementation (Python code)
+- ⏳ Surrogate gradient fine-tuning scripts
+- ⏳ SNN inference and energy analysis code
+
+For SNN methodology details, please refer to **`Research & References/iclr2023_conference copy.tex`** (Section 3 & 4).
+
+---
 
 ## 🛠️ Troubleshooting
 
@@ -251,13 +293,20 @@ The Attention-BiLSTM model provides interpretability through:
 
 ## 📄 Files Overview
 
-### Source Code (Deep Learning Implementation)
-- `deep_learning_models.py` (420 lines) - All three model implementations (CNN, BiLSTM, Attention-BiLSTM)
+### Source Code
+**Stage 2: Deep Learning Models (Tang Shuwei)**
+- `deep_learning_models.py` (420 lines) - CNN, BiLSTM, Attention-BiLSTM implementations
 - `data_utils.py` (310 lines) - Data loading and preprocessing utilities
 - `train.py` (380 lines) - Complete training pipeline
 - `predict.py` (220 lines) - Prediction generation script
 - `run_all.py` (95 lines) - Orchestrates train + predict
 - `example_usage.py` (180 lines) - Usage examples and demonstrations
+
+**Stage 1: Traditional ML Models (Ding Miao)**
+- `SVM_LR_NB.py` (251 lines) - Logistic Regression, Naive Bayes, SVM with TF-IDF features
+
+**Stage 3: SNN Models (Ye Shuhan)**
+- `[SNN implementation code]` - ⏳ **Pending** - See note below
 
 ### Configuration
 - `requirements.txt` - All Python dependencies
