@@ -9,11 +9,17 @@
 
 ## 🎯 Overview
 
-This project implements three neural network models for sentiment classification:
+This project implements comprehensive sentiment classification models:
 
+### Deep Learning Models (Neural Networks)
 - **CNN Classifier**: Multiple parallel convolutions with different filter sizes to capture n-gram features (86.3% accuracy)
 - **BiLSTM Classifier**: Bidirectional LSTM processing sequences in both directions (88.7% accuracy)
 - **Attention-BiLSTM Classifier** ⭐: Enhanced BiLSTM with attention mechanism for interpretability **(91.2% accuracy)**
+
+### Traditional Machine Learning Models (Baselines)
+- **Support Vector Machine (SVM)**: Linear SVM with TF-IDF features
+- **Logistic Regression**: Efficient baseline with L2 regularization
+- **Naive Bayes**: Probabilistic classifier for quick comparison
 
 **Course**: IE6483 / EE6483 Mini Project - Artificial Intelligence and Data Mining
 **Institution**: Nanyang Technological University (NTU)
@@ -23,12 +29,13 @@ This project implements three neural network models for sentiment classification
 ```
 final/
 ├── Source Code/                      # Python implementation files
-│   ├── deep_learning_models.py      # Model implementations
+│   ├── deep_learning_models.py      # Deep learning model implementations
 │   ├── data_utils.py                # Data loading and preprocessing
-│   ├── train.py                     # Training script
+│   ├── train.py                     # Deep learning training script
 │   ├── predict.py                   # Prediction script
-│   ├── run_all.py                   # Complete pipeline
-│   └── example_usage.py             # Usage examples
+│   ├── run_all.py                   # Complete pipeline (DL models)
+│   ├── example_usage.py             # Usage examples
+│   └── SVM_LR_NB.py                 # Traditional ML baselines
 │
 ├── Configuration & Results/          # Dependencies and results
 │   ├── requirements.txt              # Python dependencies
@@ -250,12 +257,13 @@ The Attention-BiLSTM model provides interpretability through:
 ## 📄 Files Overview
 
 ### Source Code
-- `deep_learning_models.py` (420 lines) - All three model implementations
-- `data_utils.py` (310 lines) - Data loading and preprocessing
-- `train.py` (380 lines) - Complete training pipeline
-- `predict.py` (220 lines) - Prediction generation
-- `run_all.py` (95 lines) - Orchestrates train + predict
-- `example_usage.py` (180 lines) - Usage examples and demos
+- `deep_learning_models.py` (420 lines) - All three deep learning model implementations (CNN, BiLSTM, Attention-BiLSTM)
+- `data_utils.py` (310 lines) - Data loading and preprocessing utilities
+- `train.py` (380 lines) - Complete training pipeline for deep learning models
+- `predict.py` (220 lines) - Prediction generation script
+- `run_all.py` (95 lines) - Orchestrates train + predict for DL models
+- `example_usage.py` (180 lines) - Usage examples and demonstrations
+- `SVM_LR_NB.py` (251 lines) - Traditional ML baseline models (SVM, Logistic Regression, Naive Bayes)
 
 ### Configuration
 - `requirements.txt` - All Python dependencies
